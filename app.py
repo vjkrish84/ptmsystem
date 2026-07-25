@@ -17,7 +17,6 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# Header offset and layout constraints
 st.markdown("""
     <style>
     .stMainBlockContainer, .block-container {
@@ -33,13 +32,19 @@ st.markdown("""
         font-weight: 600;
         border-radius: 8px;
     }
-    .notif-card {
-        background-color: #ffffff;
-        border: 1px solid #e0e0e0;
-        border-left: 5px solid #0066cc;
-        border-radius: 8px;
-        padding: 15px;
-        margin-bottom: 12px;
+    .chat-doc {
+        background-color: #eef6ff;
+        border-left: 4px solid #0066cc;
+        padding: 10px 14px;
+        border-radius: 6px;
+        margin-bottom: 8px;
+    }
+    .chat-patient {
+        background-color: #f4f4f4;
+        border-left: 4px solid #28a745;
+        padding: 10px 14px;
+        border-radius: 6px;
+        margin-bottom: 8px;
     }
     </style>
 """, unsafe_allow_html=True)
@@ -140,7 +145,7 @@ st.divider()
 
 if "submission_success" in st.session_state:
     st.success(st.session_state["submission_success"])
-    st.session_state.pop("submission_state", None)  # Cleanly removes key if present
+    st.session_state.pop("submission_state", None)
     del st.session_state["submission_success"]
 
 # =========================================================
@@ -157,46 +162,50 @@ if selected_role == "patient":
         • Sudden loss of consciousness or head injury
         """)
 
+    # --- TOP LEVEL PATIENT PROFILE SELECTOR ---
+    existing_patients = vitals_col.distinct("patient_name")
+    profile_options = ["➕ Create New Patient Profile"] + existing_patients if existing_patients else ["➕ Create New Patient Profile"]
+    
+    selected_option = st.selectbox(
+        "👤 Select Active Patient Profile:",
+        options=profile_options,
+        index=0 if not existing_patients else 1
+    )
+
+    if selected_option == "➕ Create New Patient Profile":
+        c_name, c_id = st.columns(2)
+        selected_patient_name = c_name.text_input("Full Name:", value="", placeholder="e.g. Sarah Connor")
+        p_id = c_id.text_input("Patient ID (Optional):", value="PT-" + str(hash(datetime.now()) % 10000))
+        default_tx_date = date.today()
+        is_new_patient = True
+    else:
+        selected_patient_name = selected_option
+        match_doc = vitals_col.find_one({"patient_name": selected_patient_name})
+        p_id = match_doc.get("patient_id", "PT-1001") if match_doc else "PT-1001"
+        
+        raw_tx_date = match_doc.get("transplant_date") if match_doc else None
+        if isinstance(raw_tx_date, datetime):
+            default_tx_date = raw_tx_date.date()
+        elif isinstance(raw_tx_date, date):
+            default_tx_date = raw_tx_date
+        else:
+            default_tx_date = date(2025, 1, 1)
+            
+        is_new_patient = False
+        st.info(f"Active Profile: **{selected_patient_name}** ({p_id})")
+
+    st.divider()
+
+    # --- NAVIGATION TABS ---
     tab_checkin, tab_notifs, tab_call, tab_rules = st.tabs([
         "📝 Daily Check-In", 
-        "🔔 Doctor Messages",
+        "💬 Care Team Chat & Instructions",
         "📞 Coordinator", 
         "🛡️ Safety Rules"
     ])
 
     # --- TAB 1: DAILY CHECK-IN ---
     with tab_checkin:
-        existing_patients = vitals_col.distinct("patient_name")
-        profile_options = ["➕ Create New Patient Profile"] + existing_patients if existing_patients else ["➕ Create New Patient Profile"]
-        
-        selected_option = st.selectbox(
-            "Select Profile or Register New:",
-            options=profile_options,
-            index=0 if not existing_patients else 1
-        )
-
-        if selected_option == "➕ Create New Patient Profile":
-            c_name, c_id = st.columns(2)
-            selected_patient_name = c_name.text_input("Full Name:", value="", placeholder="e.g. Sarah Connor")
-            p_id = c_id.text_input("Patient ID (Optional):", value="PT-" + str(hash(datetime.now()) % 10000))
-            default_tx_date = date.today()
-            is_new_patient = True
-        else:
-            selected_patient_name = selected_option
-            match_doc = vitals_col.find_one({"patient_name": selected_patient_name})
-            p_id = match_doc.get("patient_id", "PT-1001") if match_doc else "PT-1001"
-            
-            raw_tx_date = match_doc.get("transplant_date") if match_doc else None
-            if isinstance(raw_tx_date, datetime):
-                default_tx_date = raw_tx_date.date()
-            elif isinstance(raw_tx_date, date):
-                default_tx_date = raw_tx_date
-            else:
-                default_tx_date = date(2025, 1, 1)
-                
-            is_new_patient = False
-            st.info(f"Logging check-in for **{selected_patient_name}** ({p_id})")
-
         with st.form("patient_checkin_form"):
             st.subheader("1. Essential Daily Vitals")
             st.caption("💡 Tip: Draw blood labs FIRST before taking your morning Tacrolimus dose!")
@@ -281,33 +290,78 @@ if selected_role == "patient":
                 st.session_state["submission_success"] = f"✅ Check-in recorded successfully for **{selected_patient_name.strip()}**!"
                 st.rerun()
 
-    # --- TAB 2: DOCTOR MESSAGES / NOTIFICATIONS ---
+    # --- TAB 2: BIDIRECTIONAL COMMUNICATION HISTORY ---
     with tab_notifs:
-        st.subheader("📩 Messages from Your Care Team")
+        st.subheader("💬 Communication Log with Care Team")
         
-        if selected_option == "➕ Create New Patient Profile":
-            st.info("Select or register a profile above to view doctor notifications.")
+        if is_new_patient:
+            st.info("Please select an existing patient profile above to view doctor communications.")
         else:
             patient_notifs = list(notifs_col.find({"patient_name": selected_patient_name}).sort("timestamp", -1))
             
             if not patient_notifs:
-                st.write("✨ No new messages or instructions from your care team.")
+                st.write("✨ No communication history with your care team yet.")
             else:
                 for notif in patient_notifs:
                     severity = notif.get("severity", "Routine Advisory")
                     badge = "🔴" if severity == "Urgent Action Required" else ("🟡" if severity == "Follow-up Recommended" else "🟢")
                     
-                    with st.expander(f"{badge} {severity} - {notif.get('timestamp', datetime.now()).strftime('%b %d, %H:%M')}", expanded=True):
-                        st.write(f"**From:** {notif.get('doctor_name', 'Transplant Team')}")
-                        st.markdown(f"> **Instruction:** {notif.get('message', '')}")
+                    with st.expander(f"{badge} {severity} — Initiated {notif.get('timestamp', datetime.now()).strftime('%b %d, %H:%M')}", expanded=True):
+                        # Initial Doctor Message
+                        st.markdown(f"""
+                        <div class="chat-doc">
+                            <strong>👨‍⚕️ {notif.get('doctor_name', 'Transplant Attending')}</strong> <em>({notif.get('timestamp', datetime.now()).strftime('%b %d, %H:%M')})</em><br/>
+                            {notif.get('message', '')}
+                        </div>
+                        """, unsafe_allow_html=True)
                         
-                        if notif.get("acknowledged"):
-                            st.caption("✅ You acknowledged this message.")
-                        else:
-                            if st.button("Confirm & Acknowledge", key=f"ack_{notif['_id']}"):
-                                notifs_col.update_one({"_id": notif["_id"]}, {"$set": {"acknowledged": True, "ack_timestamp": datetime.now()}})
-                                st.success("Acknowledged! Your care team has been notified.")
-                                st.rerun()
+                        # Thread Replies History
+                        replies = notif.get("replies", [])
+                        for reply in replies:
+                            sender_icon = "📱" if reply.get("sender") == "patient" else "👨‍⚕️"
+                            css_class = "chat-patient" if reply.get("sender") == "patient" else "chat-doc"
+                            sender_title = selected_patient_name if reply.get("sender") == "patient" else reply.get("author", "Doctor")
+                            
+                            st.markdown(f"""
+                            <div class="{css_class}">
+                                <strong>{sender_icon} {sender_title}</strong> <em>({reply.get('timestamp', datetime.now()).strftime('%b %d, %H:%M')})</em><br/>
+                                {reply.get('text', '')}
+                            </div>
+                            """, unsafe_allow_html=True)
+                        
+                        # Acknowledge / Reply Section
+                        st.divider()
+                        col_ack, col_reply = st.columns([1, 2])
+                        
+                        with col_ack:
+                            if notif.get("acknowledged"):
+                                st.caption(f"✅ Acknowledged on {notif.get('ack_timestamp', datetime.now()).strftime('%b %d, %H:%M')}")
+                            else:
+                                if st.button("Confirm Receipt", key=f"ack_{notif['_id']}"):
+                                    notifs_col.update_one(
+                                        {"_id": notif["_id"]}, 
+                                        {"$set": {"acknowledged": True, "ack_timestamp": datetime.now()}}
+                                    )
+                                    st.success("Receipt confirmed!")
+                                    st.rerun()
+
+                        with col_reply:
+                            with st.popover("💬 Reply to Doctor"):
+                                reply_text = st.text_area("Your response or question:", key=f"p_reply_txt_{notif['_id']}")
+                                if st.button("Send Reply", key=f"p_reply_btn_{notif['_id']}"):
+                                    if reply_text.strip():
+                                        reply_entry = {
+                                            "sender": "patient",
+                                            "author": selected_patient_name,
+                                            "text": reply_text.strip(),
+                                            "timestamp": datetime.now()
+                                        }
+                                        notifs_col.update_one(
+                                            {"_id": notif["_id"]},
+                                            {"$push": {"replies": reply_entry}}
+                                        )
+                                        st.success("Reply sent!")
+                                        st.rerun()
 
     # --- TAB 3: CALL COORDINATOR ---
     with tab_call:
@@ -438,15 +492,61 @@ elif selected_role == "doctor":
                 i1.write(f"**Ultrasound:** {latest.get('us_findings', 'N/A')}")
                 i2.write(f"**DXA T-Score:** {latest.get('dxa_score', 'N/A')}")
 
-                # --- 4. SEND NOTIFICATION TO PATIENT ---
+                # --- 4. COMMUNICATION & NOTIFICATION THREADS ---
                 st.divider()
-                st.markdown("##### 📤 Send Instructions/Notification to Patient")
+                st.markdown("##### 💬 Communication & Instruction History")
                 
+                doc_notifs = list(notifs_col.find({"patient_name": name}).sort("timestamp", -1))
+                if doc_notifs:
+                    for d_notif in doc_notifs:
+                        ack_status = f"✅ Read/Ack on {d_notif.get('ack_timestamp', datetime.now()).strftime('%b %d, %H:%M')}" if d_notif.get("acknowledged") else "⏳ Unacknowledged"
+                        with st.expander(f"Thread: {d_notif.get('severity', 'Notice')} ({d_notif.get('timestamp', datetime.now()).strftime('%b %d, %H:%M')}) - {ack_status}", expanded=False):
+                            
+                            st.markdown(f"""
+                            <div class="chat-doc">
+                                <strong>👨‍⚕️ You ({d_notif.get('doctor_name', 'Attending')})</strong> <em>({d_notif.get('timestamp', datetime.now()).strftime('%b %d, %H:%M')})</em><br/>
+                                {d_notif.get('message', '')}
+                            </div>
+                            """, unsafe_allow_html=True)
+
+                            for r in d_notif.get("replies", []):
+                                r_icon = "📱" if r.get("sender") == "patient" else "👨‍⚕️"
+                                r_css = "chat-patient" if r.get("sender") == "patient" else "chat-doc"
+                                r_author = name if r.get("sender") == "patient" else "Doctor"
+                                st.markdown(f"""
+                                <div class="{r_css}">
+                                    <strong>{r_icon} {r_author}</strong> <em>({r.get('timestamp', datetime.now()).strftime('%b %d, %H:%M')})</em><br/>
+                                    {r.get('text', '')}
+                                </div>
+                                """, unsafe_allow_html=True)
+                            
+                            # Doctor Follow-up Reply Box
+                            with st.popover("💬 Reply in Thread"):
+                                doc_reply_txt = st.text_area("Doctor Reply:", key=f"doc_reply_txt_{d_notif['_id']}")
+                                if st.button("Send Reply to Thread", key=f"doc_reply_btn_{d_notif['_id']}"):
+                                    if doc_reply_txt.strip():
+                                        r_doc = {
+                                            "sender": "doctor",
+                                            "author": "Transplant Attending",
+                                            "text": doc_reply_txt.strip(),
+                                            "timestamp": datetime.now()
+                                        }
+                                        notifs_col.update_one(
+                                            {"_id": d_notif["_id"]},
+                                            {"$push": {"replies": r_doc}}
+                                        )
+                                        st.success("Reply posted!")
+                                        st.rerun()
+                else:
+                    st.caption("No prior message threads with this patient.")
+
+                # Form to Start New Thread
                 with st.form(key=f"send_notif_form_{name}"):
+                    st.markdown("**Start New Instruction Thread:**")
                     notif_severity = st.selectbox("Priority:", ["Routine Advisory", "Follow-up Recommended", "Urgent Action Required"])
-                    notif_msg = st.text_area("Doctor Message / Medication Order:", placeholder="e.g. Please increase fluid intake and repeat Creatinine lab in 48 hours.")
+                    notif_msg = st.text_area("Message / Medication Order:", placeholder="e.g. Please increase fluid intake and repeat Creatinine lab in 48 hours.")
                     
-                    submit_notif = st.form_submit_button("Send Notification")
+                    submit_notif = st.form_submit_button("Send New Instruction Thread")
                     
                     if submit_notif:
                         if not notif_msg.strip():
@@ -459,10 +559,12 @@ elif selected_role == "doctor":
                                 "severity": notif_severity,
                                 "message": notif_msg.strip(),
                                 "timestamp": datetime.now(),
-                                "acknowledged": False
+                                "acknowledged": False,
+                                "replies": []
                             }
                             notifs_col.insert_one(notif_doc)
-                            st.success(f"✅ Message sent successfully to {name}!")
+                            st.success(f"✅ Message thread started with {name}!")
+                            st.rerun()
 
                 # --- 5. DOCUMENT DOWNLOADS ---
                 st.divider()
