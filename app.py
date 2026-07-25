@@ -8,7 +8,7 @@ from pymongo import MongoClient
 from datetime import datetime, date
 
 # ---------------------------------------------------------
-# 1. Page Configuration
+# 1. Page Configuration (Auto-collapses sidebar on mobile)
 # ---------------------------------------------------------
 st.set_page_config(
     page_title="Post-Transplant Care Portal",
@@ -22,6 +22,25 @@ if "selected_patient" not in st.session_state:
     st.session_state["selected_patient"] = None
 if "show_detail" not in st.session_state:
     st.session_state["show_detail"] = False
+if "current_nav" not in st.session_state:
+    st.session_state["current_nav"] = "📱 Patient Entry"
+
+# Custom CSS for Mobile Touch Targets & Clean Spacing
+st.markdown("""
+    <style>
+    /* Make buttons and select boxes thumb-friendly on mobile */
+    .stButton>button {
+        min-height: 3rem;
+        font-weight: 600;
+        border-radius: 8px;
+    }
+    /* Clean up expander borders on mobile */
+    .streamlit-expanderHeader {
+        font-size: 1.05rem;
+        font-weight: 600;
+    }
+    </style>
+""", unsafe_allow_html=True)
 
 # ---------------------------------------------------------
 # 2. Database Connection
@@ -74,22 +93,32 @@ def check_tacrolimus_status(tac_level, transplant_date, log_date):
 # ---------------------------------------------------------
 st.warning("""
 **⚠️ CLINICAL DECISION SUPPORT DISCLAIMER & NOTICE FOR PROVIDERS**  
-This portal is an automated data aggregation and clinical decision-support demonstration tool. **It does not constitute final medical advice, diagnosis, or automated treatment orders.** Healthcare providers must independently review, verify, and validate all incoming patient parameters, lab values, and uploaded documents prior to making clinical management or pharmacological decisions.
+This portal is an automated data aggregation and clinical decision-support demonstration tool. **It does not constitute final medical advice, diagnosis, or automated treatment orders.** Healthcare providers must independently review, verify, and validate all incoming patient parameters, lab values, and uploaded documents prior to making clinical management decisions.
 """)
 
-st.title("🩺 Post-Transplant Care Portal")
+st.title("🩺 Post-Transplant Portal")
 
-tab_patient, tab_doctor, tab_protocols = st.tabs([
-    "📱 Patient Entry", 
-    "👨‍⚕️ Doctor Dashboard", 
-    "📚 Clinical Protocols"
-])
+# ---------------------------------------------------------
+# 5. Mobile-Friendly Navigation Control
+# ---------------------------------------------------------
+# Using a segmented control or drop-down navigation avoids horizontal tab overflow on mobile
+nav_options = ["📱 Patient Entry", "👨‍⚕️ Doctor Dashboard", "📚 Clinical Protocols"]
+
+selected_page = st.selectbox(
+    "Navigation Menu", 
+    options=nav_options, 
+    index=nav_options.index(st.session_state["current_nav"]),
+    label_visibility="collapsed"
+)
+st.session_state["current_nav"] = selected_page
+
+st.divider()
 
 # =========================================================
-# TAB 1: PATIENT ENTRY
+# PAGE 1: PATIENT ENTRY (Mobile Accordion Layout)
 # =========================================================
-with tab_patient:
-    st.subheader("Record Patient Diagnostics, Vitals & Upload Reports")
+if selected_page == "📱 Patient Entry":
+    st.subheader("Record Patient Diagnostics & Vitals")
     
     existing_patients = vitals_col.distinct("patient_name")
     patient_option = st.radio(
@@ -108,22 +137,18 @@ with tab_patient:
         p_id = st.text_input("Patient Medical ID / Chart #:", value="PT-9042")
         default_tx_date = datetime(2025, 1, 1)
 
-    p_sub1, p_sub2, p_sub3 = st.tabs([
-        "🩸 Daily Vitals", 
-        "🧪 Blood & Lab Reports", 
-        "🏥 Imaging & Screenings"
-    ])
-
+    # Use a Form wrapped with Expanders for smooth mobile scrolling
     with st.form("patient_full_entry"):
-        with p_sub1:
-            st.markdown("#### Daily Physical Vitals")
+        
+        # Section 1: Physical Vitals
+        with st.expander("🩸 1. Daily Physical Vitals", expanded=True):
             c1, c2 = st.columns(2)
             weight = c1.number_input("Weight (kg)", min_value=30.0, max_value=200.0, value=73.8, step=0.1)
             temp = c2.number_input("Temperature (°F)", min_value=95.0, max_value=106.0, value=98.6, step=0.1)
             
             c3, c4, c5 = st.columns(3)
-            sbp = c3.number_input("Systolic BP (Top)", min_value=70, max_value=220, value=120)
-            dbp = c4.number_input("Diastolic BP (Bottom)", min_value=40, max_value=140, value=80)
+            sbp = c3.number_input("Systolic BP", min_value=70, max_value=220, value=120)
+            dbp = c4.number_input("Diastolic BP", min_value=40, max_value=140, value=80)
             hr = c5.number_input("Heart Rate (BPM)", min_value=30, max_value=200, value=72)
 
             symptoms = st.multiselect("Report New Symptoms:", [
@@ -135,16 +160,15 @@ with tab_patient:
                 "Incision redness, warmth, or drainage"
             ])
 
-        with p_sub2:
-            st.markdown("#### Laboratory & Immunosuppression Levels")
-            
+        # Section 2: Blood & Labs
+        with st.expander("🧪 2. Blood, Labs & File Upload", expanded=True):
             col_d1, col_d2 = st.columns(2)
             tx_date_input = col_d1.date_input("Transplant Date", value=default_tx_date)
             lab_date_input = col_d2.date_input("Blood / Lab Sample Date", value=date.today())
             
             col_l1, col_l2 = st.columns(2)
             creatinine = col_l1.number_input("Serum Creatinine (mg/dL)", min_value=0.2, max_value=15.0, value=1.1, step=0.1)
-            tacrolimus = col_l2.number_input("Tacrolimus Trough Level (ng/mL)", min_value=0.0, max_value=30.0, value=8.5, step=0.5)
+            tacrolimus = col_l2.number_input("Tacrolimus Trough (ng/mL)", min_value=0.0, max_value=30.0, value=8.5, step=0.5)
             
             col_l3, col_l4 = st.columns(2)
             bkv_load = col_l3.number_input("BKV PCR (copies/mL)", min_value=0, max_value=1000000, value=0, step=100)
@@ -152,24 +176,22 @@ with tab_patient:
 
             urine_protein = st.selectbox("Urinalysis Protein:", ["Negative", "Trace", "1+", "2+", "3+"])
             
-            # File Uploader for Lab Verification
-            uploaded_lab_file = st.file_uploader("📎 Upload Official Lab Report (PDF or Image for Doctor Review):", type=["pdf", "png", "jpg", "jpeg"])
+            uploaded_lab_file = st.file_uploader("📎 Upload Official Lab Report (PDF/Image):", type=["pdf", "png", "jpg", "jpeg"])
 
-        with p_sub3:
-            st.markdown("#### Diagnostic Procedures & Surveillance")
+        # Section 3: Procedures & Screenings
+        with st.expander("🏥 3. Diagnostic Procedures & Surveillance", expanded=False):
             col_s1, col_s2 = st.columns(2)
             us_date = col_s1.date_input("Renal Ultrasound Date", value=date.today())
             us_result = col_s2.text_input("Ultrasound Findings / RI", value="Normal graft size, RI = 0.64, no hydronephrosis")
             
             col_s3, col_s4 = st.columns(2)
             dxa_score = col_s3.number_input("DXA Scan T-Score", min_value=-5.0, max_value=3.0, value=-0.8, step=0.1)
-            colonoscopy_date = col_s4.text_input("Last Colonoscopy Date/Status", value="Cleared (Next due in 5 yrs)")
+            colonoscopy_date = col_s4.text_input("Last Colonoscopy Status", value="Cleared (Next due in 5 yrs)")
             
-            cancer_screening = st.text_area("Other Cancer Screenings (Dermatology, Mammogram, Pap)", value="Dermatology: Clear; Annual Mammogram: Normal")
+            cancer_screening = st.text_area("Other Cancer Screenings", value="Dermatology: Clear; Annual Mammogram: Normal")
 
         submitted = st.form_submit_button("Submit Complete Entry", use_container_width=True)
         if submitted:
-            # File processing for MongoDB storage
             file_data = None
             file_name = None
             if uploaded_lab_file is not None:
@@ -206,11 +228,11 @@ with tab_patient:
             st.success(f"✅ Records and lab reports successfully submitted for {selected_patient_name}!")
 
 # =========================================================
-# TAB 2: DOCTOR DASHBOARD
+# PAGE 2: DOCTOR DASHBOARD (Mobile Triage Cards)
 # =========================================================
-with tab_doctor:
+elif selected_page == "👨‍⚕️ Doctor Dashboard":
     st.subheader("👨‍⚕️ Clinical Triage & Diagnostic Roster")
-    st.caption("Tap any patient banner below to expand their full lab report, imaging, vitals, and uploaded source files.")
+    st.caption("Tap any patient banner below to review flags, lab reports, and uploaded documents.")
 
     patient_names = vitals_col.distinct("patient_name")
     
@@ -264,7 +286,7 @@ with tab_doctor:
             if latest['heart_rate'] > 100 or latest['heart_rate'] < 55:
                 amber_flags.append(f"Abnormal HR ({latest['heart_rate']} BPM)")
 
-            # Assign Priority
+            # Priority Assignment
             if red_flags:
                 status_icon = "🔴 RED ALERT"
                 priority = 1
@@ -289,14 +311,14 @@ with tab_doctor:
 
         patient_summaries.sort(key=lambda x: x['priority'])
 
-        # Render Clickable Patient Banners
+        # Render Touch-Friendly Patient Cards
         for p in patient_summaries:
             name = p['patient_name']
             status = p['status']
             p_id = p['patient_id']
             
-            summary_line = " | Flags: " + ", ".join(p['red_flags'] if p['red_flags'] else p['amber_flags']) if (p['red_flags'] or p['amber_flags']) else " | All Parameters Stable"
-            button_label = f"{status} — {name} (ID: {p_id}){summary_line}"
+            summary_line = " | Flags: " + ", ".join(p['red_flags'] if p['red_flags'] else p['amber_flags']) if (p['red_flags'] or p['amber_flags']) else " | Parameters Stable"
+            button_label = f"{status}\n{name} (ID: {p_id}){summary_line}"
             
             if st.button(button_label, key=f"btn_{name}", use_container_width=True):
                 st.session_state["selected_patient"] = name
@@ -304,7 +326,7 @@ with tab_doctor:
 
         st.divider()
 
-        # Collapsible Detailed Inspection View
+        # Detailed Patient Inspection
         if st.session_state["show_detail"] and st.session_state["selected_patient"]:
             selected_name = st.session_state["selected_patient"]
             selected_p = next((p for p in patient_summaries if p['patient_name'] == selected_name), None)
@@ -313,7 +335,7 @@ with tab_doctor:
                 l_data = selected_p['latest_data']
 
                 with st.expander(f"🔍 Clinical File: {selected_p['patient_name']}", expanded=True):
-                    st.caption(f"Status: **{selected_p['status']}** | Chart ID: `{selected_p['patient_id']}` | Last Updated: {l_data['timestamp'].strftime('%Y-%m-%d %H:%M')}")
+                    st.caption(f"Status: **{selected_p['status']}** | Chart ID: `{selected_p['patient_id']}` | Updated: {l_data['timestamp'].strftime('%Y-%m-%d %H:%M')}")
 
                     if selected_p['red_flags']:
                         st.error("### 🚨 ACTIVE CLINICAL ALERTS\n" + "\n".join([f"- {f}" for f in selected_p['red_flags']]))
@@ -322,25 +344,26 @@ with tab_doctor:
                     else:
                         st.success("✅ All vitals and lab parameters are currently within normal target range.")
 
-                    doc_sub1, doc_sub2, doc_sub3 = st.tabs(["📊 Daily Vitals", "🧪 Lab Results & Source File", "🏥 Imaging & Screenings"])
-
-                    with doc_sub1:
-                        c1, c2, c3, c4 = st.columns(4)
+                    # Use mobile accordion containers instead of tight horizontal sub-tabs
+                    with st.expander("📊 Physical Vitals & Weight Trend", expanded=True):
+                        c1, c2 = st.columns(2)
                         c1.metric("Weight", f"{l_data['weight_kg']} kg", f"{selected_p['weight_change']:+.1f} kg")
                         c2.metric("Temp", f"{l_data['temperature_f']} °F")
+                        
+                        c3, c4 = st.columns(2)
                         c3.metric("BP", f"{l_data['systolic_bp']}/{l_data['diastolic_bp']}")
                         c4.metric("Heart Rate", f"{l_data['heart_rate']} BPM")
                         
-                        fig = px.line(selected_p['full_df'], x="timestamp", y="weight_kg", title="Fluid Retention & Weight Trend", markers=True)
+                        fig = px.line(selected_p['full_df'], x="timestamp", y="weight_kg", title="Weight Trend (Fluid Retention)", markers=True)
                         st.plotly_chart(fig, use_container_width=True)
 
-                    with doc_sub2:
+                    with st.expander("🧪 Lab Results & Source File", expanded=True):
                         lab_date_str = l_data.get('lab_report_date').strftime('%Y-%m-%d') if l_data.get('lab_report_date') else "N/A"
-                        st.info(f"📅 **Blood Sample Collection Date:** {lab_date_str}")
+                        st.info(f"📅 **Blood Sample Date:** {lab_date_str}")
                         
                         l1, l2, l3 = st.columns(3)
-                        l1.metric("Serum Creatinine", f"{l_data.get('creatinine', 'N/A')} mg/dL")
-                        l2.metric("Tacrolimus Level", f"{l_data.get('tacrolimus', 'N/A')} ng/mL")
+                        l1.metric("Creatinine", f"{l_data.get('creatinine', 'N/A')} mg/dL")
+                        l2.metric("Tacrolimus", f"{l_data.get('tacrolimus', 'N/A')} ng/mL")
                         l3.metric("Urine Protein", f"{l_data.get('urine_protein', 'N/A')}")
 
                         l4, l5 = st.columns(2)
@@ -348,7 +371,7 @@ with tab_doctor:
                         l5.metric("DSA Status", f"{l_data.get('dsa_status', 'N/A')}")
 
                         st.divider()
-                        st.markdown("#### 📁 Verification & Document Inspector")
+                        st.markdown("#### 📁 Verification Document Inspector")
                         file_b64 = l_data.get("lab_file_base64")
                         file_name = l_data.get("lab_file_name")
 
@@ -358,14 +381,15 @@ with tab_doctor:
                                 label=f"📥 Download Uploaded Lab Report ({file_name})",
                                 data=bytes_decoded,
                                 file_name=file_name,
-                                mime="application/octet-stream"
+                                mime="application/octet-stream",
+                                use_container_width=True
                             )
                             if file_name.lower().endswith(('.png', '.jpg', '.jpeg')):
-                                st.image(bytes_decoded, caption=f"Uploaded Lab Report: {file_name}", use_column_width=True)
+                                st.image(bytes_decoded, caption=f"Uploaded Report: {file_name}", use_column_width=True)
                         else:
-                            st.warning("⚠️ No physical lab report was uploaded for this record. Please cross-reference manual entries with lab portal if values seem anomalous.")
+                            st.warning("⚠️ No physical lab report was uploaded for this record.")
 
-                    with doc_sub3:
+                    with st.expander("🏥 Imaging & Surveillance Screenings", expanded=False):
                         us_date_str = l_data.get('us_date').strftime('%Y-%m-%d') if l_data.get('us_date') else "N/A"
                         st.markdown(f"**Renal Ultrasound Date:** {us_date_str}")
                         st.markdown(f"**Findings:** {l_data.get('us_findings', 'N/A')}")
@@ -374,9 +398,9 @@ with tab_doctor:
                         st.markdown(f"**Cancer Screenings:** {l_data.get('cancer_screening', 'N/A')}")
 
 # =========================================================
-# TAB 3: CLINICAL PROTOCOLS
+# PAGE 3: CLINICAL PROTOCOLS
 # =========================================================
-with tab_protocols:
+elif selected_page == "📚 Clinical Protocols":
     st.subheader("📋 Post-Transplant Standard Protocols")
     
     with st.expander("🔬 Lab Frequency & Drug Level Schedules", expanded=True):
@@ -386,13 +410,13 @@ with tab_protocols:
         * **Months 6–12:** Monthly labs; Donor-Specific Antibodies (DSA) & Renal US as indicated.
         """)
 
-    with st.expander("🛡️ Infection Control & Food Safety Rules"):
+    with st.expander("🛡️ Infection Control & Food Safety Rules", expanded=True):
         st.markdown("""
         * **Food Safety:** Strictly no grapefruit/starfruit/Seville oranges (interferes with Tacrolimus). No raw meats, unpasteurized dairy, or soft eggs.
         * **Infection Prevention:** Mask in crowded indoor settings for first 3–6 months. No live vaccines.
         """)
 
-    with st.expander("🎗️ Cancer Screening Schedule"):
+    with st.expander("🎗️ Cancer Screening Schedule", expanded=False):
         st.markdown("""
         * **Dermatology:** Annual full-body skin exam (elevated skin cancer risk).
         * **Routine Screenings:** Annual mammogram (women ≥40), Colonoscopy (age ≥45), Annual Pap smear.
