@@ -174,7 +174,7 @@ if "submission_success" in st.session_state:
     del st.session_state["submission_success"]
 
 # =========================================================
-# VIEW 1: CLEAN & STREAMLINED PATIENT PORTAL
+# VIEW 1: PATIENT PORTAL
 # =========================================================
 if selected_role == "patient":
     
@@ -219,7 +219,6 @@ if selected_role == "patient":
 
     st.markdown("<br/>", unsafe_allow_html=True)
 
-    # --- UNIFIED 2-TAB NAVIGATION (Clean & Decluttered) ---
     tab_checkin, tab_care_team = st.tabs([
         "📝 Daily Check-In", 
         "💬 Care Team & Safety Info"
@@ -368,7 +367,6 @@ if selected_role == "patient":
 
         st.divider()
 
-        # Collapsible Guidelines
         with st.expander("📞 When to Call Coordinator", expanded=False):
             st.markdown("""
             • Noticeable drop in urine output or pain over graft site  
@@ -382,7 +380,7 @@ if selected_role == "patient":
             st.write("**Diet:** Avoid Grapefruit, Pomegranate, NSAIDs (Ibuprofen/Advil), raw foods.")
 
 # =========================================================
-# VIEW 2: STREAMLINED & UNCLUTTERED CLINICAL DASHBOARD
+# VIEW 2: ACCORDION CLINICAL DASHBOARD (HORIZONTAL/COLLAPSIBLE)
 # =========================================================
 elif selected_role == "doctor":
     st.caption("⚠️ **Notice:** Decision-support tool only. Verify patient logs prior to taking clinical action.")
@@ -392,7 +390,7 @@ elif selected_role == "doctor":
     if not patient_names:
         st.info("No patient records found.")
     else:
-        # --- 1. PATIENT SELECTION DROPDOWN (Replaces Nesting) ---
+        # --- 1. PATIENT SELECTION DROPDOWN ---
         patient_summary_list = []
         patient_map = {}
 
@@ -441,16 +439,12 @@ elif selected_role == "doctor":
         v4.metric("Creatinine", f"{latest.get('creatinine', 'N/A')} mg/dL")
         v5.metric("Tacrolimus", f"{latest.get('tacrolimus', 'N/A')} ng/mL")
 
-        # --- 3. CLEAN SUB-TABS FOR CLINICAL METRICS ---
-        doc_tab1, doc_tab2, doc_tab3, doc_tab4 = st.tabs([
-            "🩺 Overview & Labs", 
-            "📈 Parameter Trends", 
-            "💬 Messages & Orders", 
-            "📥 Attached Scans"
-        ])
+        st.markdown("<br/>", unsafe_allow_html=True)
 
-        # TAB 1: OVERVIEW & LABS
-        with doc_tab1:
+        # --- 3. ACCORDION (COLLAPSIBLE HORIZONTAL EXPANDERS) ---
+        
+        # ACCORDION SECTION 1: OVERVIEW & LABS
+        with st.expander("🩺 1. Primary Overview & Diagnostic Labs", expanded=True):
             c_left, c_right = st.columns(2)
             with c_left:
                 st.markdown("##### 🧪 Lab Values")
@@ -469,8 +463,8 @@ elif selected_role == "doctor":
             if reported_symptoms:
                 st.error(f"🚩 **Reported Symptoms:** {', '.join(reported_symptoms)}")
 
-        # TAB 2: PARAMETER TRENDS
-        with doc_tab2:
+        # ACCORDION SECTION 2: PARAMETER TREND ANALYSIS
+        with st.expander("📈 2. Parameter Trend Analysis", expanded=False):
             df_p = pd.DataFrame(p_docs)
             trend_param = st.selectbox(
                 "Select Trend Metric:",
@@ -504,8 +498,8 @@ elif selected_role == "doctor":
                 )
                 st.plotly_chart(fig, use_container_width=True)
 
-        # TAB 3: COMMUNICATION LOG & INSTRUCTIONS
-        with doc_tab3:
+        # ACCORDION SECTION 3: MESSAGES & ORDERS
+        with st.expander("💬 3. Care Team Messaging & Orders", expanded=False):
             doc_notifs = list(notifs_col.find({"patient_name": p_name}).sort("timestamp", -1))
             
             with st.form(key=f"send_notif_form_{p_name}"):
@@ -530,7 +524,7 @@ elif selected_role == "doctor":
                         st.success("Instruction sent!")
                         st.rerun()
 
-            st.markdown("##### Past Threads")
+            st.markdown("##### Past Message Threads")
             if doc_notifs:
                 for d_notif in doc_notifs:
                     ack_status = "✅ Read" if d_notif.get("acknowledged") else "⏳ Unread"
@@ -568,8 +562,8 @@ elif selected_role == "doctor":
             else:
                 st.caption("No prior message threads.")
 
-        # TAB 4: ATTACHED REPORTS
-        with doc_tab4:
+        # ACCORDION SECTION 4: ATTACHED REPORTS & SCANS
+        with st.expander("📥 4. Attached Files & Reports", expanded=False):
             st.markdown("##### Downloadable Attachments")
             d1, d2 = st.columns(2)
             if latest.get("lab_file_base64"):
