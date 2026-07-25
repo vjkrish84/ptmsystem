@@ -12,22 +12,19 @@ from datetime import datetime, date
 st.set_page_config(
     page_title="Post-Transplant Portal",
     page_icon="🩺",
-    layout="wide", # Allows broad viewing on desktop, flexes on mobile
+    layout="wide",
     initial_sidebar_state="collapsed"
 )
 
-# Fixes header collision and prevents top section cut-offs
+# Header offset and layout constraints
 st.markdown("""
     <style>
-    /* Safely offset page body so top app header doesn't cut off elements */
     .stMainBlockContainer, .block-container {
         padding-top: 4.5rem !important;
         padding-bottom: 2rem !important;
-        max-width: 950px; /* Constrains line length on wide screens */
+        max-width: 1100px;
         margin: 0 auto;
     }
-    
-    /* Touch-friendly full-width action buttons */
     .stButton>button {
         width: 100%;
         min-height: 3.2rem;
@@ -35,14 +32,12 @@ st.markdown("""
         font-weight: 600;
         border-radius: 8px;
     }
-
-    /* Clean Card Containers */
-    .portal-card {
+    .metric-card {
         background-color: #f8f9fa;
-        border-left: 4px solid #0066cc;
-        padding: 1rem;
-        border-radius: 6px;
-        margin-bottom: 1rem;
+        border: 1px solid #e9ecef;
+        border-radius: 8px;
+        padding: 12px;
+        margin-bottom: 10px;
     }
     </style>
 """, unsafe_allow_html=True)
@@ -124,7 +119,6 @@ def evaluate_clinical_alerts(latest_doc, prev_doc=None):
 # ---------------------------------------------------------
 st.title("🩺 Post-Transplant Portal")
 
-# Prominent, non-truncated clinical warning bar
 st.warning("⚠️ **Clinical Notice:** Decision-support tool only. Providers must independently verify incoming patient logs prior to taking clinical action.")
 
 query_params = st.query_params
@@ -142,12 +136,16 @@ selected_role = st.segmented_control(
 
 st.divider()
 
+# Persistent Submission Success Banner
+if "submission_success" in st.session_state:
+    st.success(st.session_state["submission_success"])
+    del st.session_state["submission_success"]
+
 # =========================================================
 # VIEW 1: PATIENT PORTAL
 # =========================================================
 if selected_role == "patient":
     
-    # Emergency Warning Section
     with st.expander("🚨 EMERGENCY RED FLAGS (Click to Expand)", expanded=False):
         st.error("""
         **GO TO THE NEAREST EMERGENCY ROOM IMMEDIATELY IF YOU HAVE:**  
@@ -164,17 +162,15 @@ if selected_role == "patient":
     ])
 
     # --- TAB 1: DAILY CHECK-IN ---
-    # --- TAB 1: DAILY CHECK-IN ---
     with tab_checkin:
         existing_patients = vitals_col.distinct("patient_name")
         
-        # Allow user to choose between selecting existing profile or creating a new one
         profile_options = ["➕ Create New Patient Profile"] + existing_patients if existing_patients else ["➕ Create New Patient Profile"]
         
         selected_option = st.selectbox(
             "Select Profile or Register New:",
             options=profile_options,
-            index=0 if not existing_patients else 1 # Default to existing patient if available
+            index=0 if not existing_patients else 1
         )
 
         if selected_option == "➕ Create New Patient Profile":
@@ -188,7 +184,6 @@ if selected_role == "patient":
             match_doc = vitals_col.find_one({"patient_name": selected_patient_name})
             p_id = match_doc.get("patient_id", "PT-1001") if match_doc else "PT-1001"
             
-            # Safely extract existing transplant date
             raw_tx_date = match_doc.get("transplant_date") if match_doc else None
             if isinstance(raw_tx_date, datetime):
                 default_tx_date = raw_tx_date.date()
@@ -198,11 +193,11 @@ if selected_role == "patient":
                 default_tx_date = date(2025, 1, 1)
                 
             is_new_patient = False
-            st.success(f"Logging check-in for **{selected_patient_name}** ({p_id})")
+            st.info(f"Logging check-in for **{selected_patient_name}** ({p_id})")
 
         with st.form("patient_checkin_form"):
             st.subheader("1. Essential Daily Vitals")
-            st.info("💡 Tip: Draw blood labs FIRST before taking your morning Tacrolimus dose!")
+            st.caption("💡 Tip: Draw blood labs FIRST before taking your morning Tacrolimus dose!")
 
             c1, c2 = st.columns(2)
             weight = c1.number_input("Weight (kg)", value=70.0, step=0.1)
@@ -222,13 +217,12 @@ if selected_role == "patient":
 
             st.divider()
             
-            # Collapsible section for labs / dates
             with st.expander("🧪 Blood Labs & Transplant Details", expanded=is_new_patient):
                 tx_date_input = st.date_input("Transplant Date", value=default_tx_date)
                 lab_date_input = st.date_input("Lab Date", value=date.today())
                 creatinine = st.number_input("Creatinine (mg/dL)", value=1.1, step=0.1)
                 tacrolimus = st.number_input("Tacrolimus Level (ng/mL)", value=8.5, step=0.5)
-                bkv_load = st.number_input("BKV PCR Load", value=0, step=100)
+                bkv_load = st.number_input("BKV PCR Load (copies/mL)", value=0, step=100)
                 dsa_status = st.selectbox("DSA Antibodies:", ["Negative", "Positive (Low MFI)", "Positive (High MFI)", "Pending"])
                 uploaded_lab_file = st.file_uploader("Upload Lab PDF/Photo:", type=["pdf", "png", "jpg", "jpeg"], key="lab_u")
             
@@ -276,12 +270,16 @@ if selected_role == "patient":
                     "lab_file_name": lab_fname,
                     "us_findings": us_result,
                     "dxa_score": dxa_score,
+                    "colonoscopy": colonoscopy_date,
+                    "cancer_screening": cancer_screening,
                     "scan_file_base64": scan_b64,
                     "scan_file_name": scan_fname
                 }
                 vitals_col.insert_one(new_log)
-                st.success(f"✅ Check-in saved for {selected_patient_name}!")
-                st.rerun() # Refresh list automatically so the new user appears in dropdown
+                
+                # Store success message in session_state before rerun
+                st.session_state["submission_success"] = f"✅ Check-in recorded successfully for **{selected_patient_name.strip()}**!"
+                st.rerun()
 
     # --- TAB 2: CALL COORDINATOR ---
     with tab_call:
@@ -315,10 +313,10 @@ if selected_role == "patient":
             st.warning("**Dietary Restrictions:** Avoid Grapefruit/Pomegranate, NSAID pain relievers (Ibuprofen/Advil), and raw/undercooked foods.")
 
 # =========================================================
-# VIEW 2: CLINICAL TRIAGE BOARD
+# VIEW 2: FULL CLINICAL TRIAGE BOARD
 # =========================================================
 elif selected_role == "doctor":
-    st.subheader("👨‍⚕️ Clinical Triage & Monitoring Board")
+    st.subheader("👨‍⚕️ Clinical Triage & Complete Patient Dashboard")
 
     patient_names = vitals_col.distinct("patient_name")
 
@@ -336,21 +334,61 @@ elif selected_role == "doctor":
 
             status_tag = "🔴 RED ALERT" if red_flags else ("🟡 WATCH" if amber_flags else "🟢 STABLE")
             
-            with st.expander(f"{status_tag} — {name} (Day {days_post_op} Post-Op)"):
+            with st.expander(f"{status_tag} — {name} | ID: {latest.get('patient_id', 'N/A')} (Day {days_post_op} Post-Op)"):
+                
+                # Active Clinical Flags
                 if red_flags:
-                    st.error("🚨 Red Flags: " + ", ".join(red_flags))
+                    st.error("🚨 **CRITICAL ALERTS:** " + " • ".join(red_flags))
                 if amber_flags:
-                    st.warning("⚠️ Watch Flags: " + ", ".join(amber_flags))
+                    st.warning("⚠️ **WATCH ALERTS:** " + " • ".join(amber_flags))
 
-                m1, m2, m3, m4 = st.columns(4)
-                m1.metric("Weight", f"{latest['weight_kg']} kg")
-                m2.metric("BP", f"{latest['systolic_bp']}/{latest['diastolic_bp']}")
-                m3.metric("Creatinine", f"{latest.get('creatinine', 'N/A')}")
-                m4.metric("Tacrolimus", f"{latest.get('tacrolimus', 'N/A')}")
+                # Section 1: Daily Vitals
+                st.markdown("##### 🩺 Primary Vitals")
+                v1, v2, v3, v4, v5 = st.columns(5)
+                v1.metric("Weight", f"{latest.get('weight_kg', 'N/A')} kg")
+                v2.metric("Blood Pressure", f"{latest.get('systolic_bp', 'N/A')}/{latest.get('diastolic_bp', 'N/A')}")
+                v3.metric("Heart Rate", f"{latest.get('heart_rate', 'N/A')} BPM")
+                v4.metric("Temperature", f"{latest.get('temperature_f', 'N/A')} °F")
+                v5.metric("Last Logged", latest.get("timestamp", datetime.now()).strftime("%b %d, %H:%M"))
 
-                # Download triggers for submitted files
+                # Reported Symptoms
+                reported_symptoms = latest.get("symptoms", [])
+                if reported_symptoms:
+                    st.error(f"🚩 **Reported Symptoms:** {', '.join(reported_symptoms)}")
+                else:
+                    st.caption("✅ No active patient symptoms reported today.")
+
+                st.divider()
+
+                # Section 2: Laboratory & Immunological Metrics
+                st.markdown("##### 🧪 Labs & Immunological Parameters")
+                l1, l2, l3, l4 = st.columns(4)
+                l1.metric("Creatinine", f"{latest.get('creatinine', 'N/A')} mg/dL")
+                l2.metric("Tacrolimus", f"{latest.get('tacrolimus', 'N/A')} ng/mL")
+                l3.metric("BKV PCR Load", f"{latest.get('bkv_load', '0')} copies/mL")
+                l4.metric("DSA Antibodies", f"{latest.get('dsa_status', 'N/A')}")
+
+                st.divider()
+
+                # Section 3: Imaging, Scans & Screenings
+                st.markdown("##### 🖼️ Imaging & Diagnostic Screenings")
+                i1, i2, i3 = st.columns(3)
+                i1.write(f"**Ultrasound:** {latest.get('us_findings', 'N/A')}")
+                i2.write(f"**DXA T-Score:** {latest.get('dxa_score', 'N/A')}")
+                i3.write(f"**Colonoscopy:** {latest.get('colonoscopy', 'N/A')}")
+                st.write(f"**Cancer Screenings:** {latest.get('cancer_screening', 'N/A')}")
+
+                # Section 4: Document Downloads
+                st.divider()
+                st.markdown("##### 📥 Attached Reports & Files")
                 d1, d2 = st.columns(2)
+                
                 if latest.get("lab_file_base64"):
-                    d1.download_button("📥 Download Lab Report", base64.b64decode(latest["lab_file_base64"]), file_name=latest.get("lab_file_name", "lab.pdf"))
+                    d1.download_button("📄 Download Lab Report", base64.b64decode(latest["lab_file_base64"]), file_name=latest.get("lab_file_name", "lab.pdf"))
+                else:
+                    d1.caption("No lab PDF uploaded.")
+
                 if latest.get("scan_file_base64"):
                     d2.download_button("🖼️ Download Diagnostic Scan", base64.b64decode(latest["scan_file_base64"]), file_name=latest.get("scan_file_name", "scan.pdf"))
+                else:
+                    d2.caption("No diagnostic scan uploaded.")
