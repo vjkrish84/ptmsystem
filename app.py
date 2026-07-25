@@ -5,7 +5,7 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 from pymongo import MongoClient
-from datetime import datetime, date, timedelta
+from datetime import datetime, date
 
 # ---------------------------------------------------------
 # 1. Page Configuration & Custom CSS
@@ -168,6 +168,12 @@ with col_role:
 
 st.divider()
 
+# Mandatory Clinical Disclaimer Banner
+st.warning("""
+**⚠️ CLINICAL DECISION SUPPORT DISCLAIMER & NOTICE FOR PROVIDERS**  
+This portal is an automated data aggregation and clinical decision-support demonstration tool. **It does not constitute final medical advice, diagnosis, or automated treatment orders.** Healthcare providers must independently review, verify, and validate all incoming patient parameters, lab values, and uploaded documents prior to making clinical management decisions.
+""")
+
 # =========================================================
 # VIEW 1: PATIENT PORTAL
 # =========================================================
@@ -181,7 +187,7 @@ if selected_role == "patient":
     """)
 
     tab_checkin, tab_when_to_call, tab_safety, tab_nutrition = st.tabs([
-        "📝 Daily Check-In & Labs", 
+        "📝 Daily Check-In & Uploads", 
         "📞 When to Call Coordinator", 
         "🛡️ Infection Rules & Vaccines", 
         "🥗 Nutrition & Food Safety"
@@ -227,7 +233,7 @@ if selected_role == "patient":
                     "Nausea, vomiting, or diarrhea"
                 ])
 
-            with st.expander("🧪 2. Blood, Labs & Document Upload", expanded=True):
+            with st.expander("🧪 2. Blood, Lab Work & Lab Report Upload", expanded=True):
                 col_d1, col_d2 = st.columns(2)
                 tx_date_input = col_d1.date_input("Transplant Date", value=default_tx_date)
                 lab_date_input = col_d2.date_input("Lab Sample Date", value=date.today())
@@ -240,16 +246,41 @@ if selected_role == "patient":
                 bkv_load = col_l3.number_input("BKV PCR Load (copies/mL)", min_value=0, max_value=1000000, value=0, step=100)
                 dsa_status = col_l4.selectbox("Donor Specific Antibodies (DSA):", ["Negative", "Positive (Low MFI)", "Positive (High MFI)", "Pending"])
 
-                uploaded_lab_file = st.file_uploader("📎 Upload Official Lab Report File (PDF / Image):", type=["pdf", "png", "jpg", "jpeg"])
+                uploaded_lab_file = st.file_uploader("📎 Upload Official Lab Report File (PDF / Image):", type=["pdf", "png", "jpg", "jpeg"], key="lab_upload")
 
-            submitted = st.form_submit_button("Submit Daily Entry & Run Alert Check", use_container_width=True)
+            # NEW SECTION: IMAGING, SCANS & DIAGNOSTICS UPLOAD
+            with st.expander("🖼️ 3. Imaging Studies & Surveillance Scan Uploads", expanded=True):
+                st.caption("Upload Ultrasound reports, DXA scans, or cancer screening documentation.")
+                
+                col_img1, col_img2 = st.columns(2)
+                us_date = col_img1.date_input("Renal Ultrasound Scan Date", value=date.today())
+                us_result = col_img2.text_input("Ultrasound Findings / Resistive Index (RI)", value="Normal graft size, RI = 0.64, no hydronephrosis")
+                
+                col_img3, col_img4 = st.columns(2)
+                dxa_score = col_img3.number_input("DXA Scan T-Score", min_value=-5.0, max_value=3.0, value=-0.8, step=0.1)
+                colonoscopy_date = col_img4.text_input("Colonoscopy / Endoscopy Status", value="Cleared (Next due in 5 yrs)")
+                
+                cancer_screening = st.text_area("Other Cancer Screenings", value="Dermatology: Skin exam clear; Mammogram: Normal")
+                
+                uploaded_scan_file = st.file_uploader("🖼️ Upload Radiology Scan / Ultrasound / DXA Document:", type=["pdf", "png", "jpg", "jpeg"], key="scan_upload")
+
+            submitted = st.form_submit_button("Submit Entry & Run Alert Check", use_container_width=True)
             if submitted:
-                file_data = None
-                file_name = None
+                # Lab File Processing
+                lab_file_data = None
+                lab_file_name = None
                 if uploaded_lab_file is not None:
-                    file_bytes = uploaded_lab_file.read()
-                    file_data = base64.b64encode(file_bytes).decode('utf-8')
-                    file_name = uploaded_lab_file.name
+                    lab_file_bytes = uploaded_lab_file.read()
+                    lab_file_data = base64.b64encode(lab_file_bytes).decode('utf-8')
+                    lab_file_name = uploaded_lab_file.name
+
+                # Scan File Processing
+                scan_file_data = None
+                scan_file_name = None
+                if uploaded_scan_file is not None:
+                    scan_file_bytes = uploaded_scan_file.read()
+                    scan_file_data = base64.b64encode(scan_file_bytes).decode('utf-8')
+                    scan_file_name = uploaded_scan_file.name
 
                 new_log = {
                     "patient_id": p_id,
@@ -267,11 +298,18 @@ if selected_role == "patient":
                     "tacrolimus": tacrolimus,
                     "bkv_load": bkv_load,
                     "dsa_status": dsa_status,
-                    "lab_file_base64": file_data,
-                    "lab_file_name": file_name
+                    "lab_file_base64": lab_file_data,
+                    "lab_file_name": lab_file_name,
+                    "us_date": datetime.combine(us_date, datetime.min.time()),
+                    "us_findings": us_result,
+                    "dxa_score": dxa_score,
+                    "colonoscopy": colonoscopy_date,
+                    "cancer_screening": cancer_screening,
+                    "scan_file_base64": scan_file_data,
+                    "scan_file_name": scan_file_name
                 }
                 vitals_col.insert_one(new_log)
-                st.success(f"✅ Daily check-in logged successfully for {selected_patient_name}!")
+                st.success(f"✅ Entry & Imaging files submitted successfully for {selected_patient_name}!")
 
     # --- TAB 2: WHEN TO CALL COORDINATOR ---
     with tab_when_to_call:
@@ -482,24 +520,53 @@ elif selected_role == "doctor":
                     fig = px.line(selected_p['full_df'], x="timestamp", y="weight_kg", title="Weight Log (24h Retention Tracking)", markers=True)
                     st.plotly_chart(fig, use_container_width=True)
 
-                    # 4. LAB VERIFICATION & ATTACHED PDF
-                    st.markdown("### 🧪 Lab Values & Source Document Inspector")
+                    # 4. LAB VERIFICATION & ATTACHED LAB REPORT
+                    st.markdown("### 🧪 Lab Values & Report Document Inspector")
                     l1, l2, l3, l4 = st.columns(4)
                     l1.metric("Creatinine", f"{l_data.get('creatinine', 'N/A')} mg/dL")
                     l2.metric("Tacrolimus Trough", f"{l_data.get('tacrolimus', 'N/A')} ng/mL")
                     l3.metric("BKV PCR Load", f"{l_data.get('bkv_load', 0):,} copies/mL")
                     l4.metric("DSA Status", f"{l_data.get('dsa_status', 'N/A')}")
 
-                    file_b64 = l_data.get("lab_file_base64")
-                    file_name = l_data.get("lab_file_name")
-                    if file_b64 and file_name:
-                        bytes_decoded = base64.b64decode(file_b64)
+                    lab_b64 = l_data.get("lab_file_base64")
+                    lab_name = l_data.get("lab_file_name")
+                    if lab_b64 and lab_name:
+                        lab_bytes = base64.b64decode(lab_b64)
                         st.download_button(
-                            label=f"📥 Download Uploaded Lab Report ({file_name})",
-                            data=bytes_decoded,
-                            file_name=file_name,
+                            label=f"📥 Download Lab Report ({lab_name})",
+                            data=lab_bytes,
+                            file_name=lab_name,
                             mime="application/octet-stream",
-                            use_container_width=True
+                            use_container_width=True,
+                            key="btn_dl_lab"
                         )
                     else:
-                        st.info("ℹ️ No physical lab report document uploaded for this log entry.")
+                        st.info("ℹ️ No physical lab report document attached to this entry.")
+
+                    # 5. IMAGING & RADIOLOGY SCAN INSPECTOR
+                    st.divider()
+                    st.markdown("### 🖼️ Diagnostic Imaging & Radiology Inspector")
+                    
+                    us_date_str = l_data.get('us_date').strftime('%Y-%m-%d') if l_data.get('us_date') else "N/A"
+                    st.markdown(f"**Renal Ultrasound Date:** `{us_date_str}`")
+                    st.markdown(f"**Ultrasound Findings / RI:** {l_data.get('us_findings', 'N/A')}")
+                    st.markdown(f"**DXA Bone Density T-Score:** `{l_data.get('dxa_score', 'N/A')}`")
+                    st.markdown(f"**Colonoscopy Status:** {l_data.get('colonoscopy', 'N/A')}")
+                    st.markdown(f"**Cancer Screenings:** {l_data.get('cancer_screening', 'N/A')}")
+
+                    scan_b64 = l_data.get("scan_file_base64")
+                    scan_name = l_data.get("scan_file_name")
+                    if scan_b64 and scan_name:
+                        scan_bytes = base64.b64decode(scan_b64)
+                        st.download_button(
+                            label=f"📥 Download Radiology Image / Scan ({scan_name})",
+                            data=scan_bytes,
+                            file_name=scan_name,
+                            mime="application/octet-stream",
+                            use_container_width=True,
+                            key="btn_dl_scan"
+                        )
+                        if scan_name.lower().endswith(('.png', '.jpg', '.jpeg')):
+                            st.image(scan_bytes, caption=f"Uploaded Radiology File: {scan_name}", use_column_width=True)
+                    else:
+                        st.info("ℹ️ No radiology scan document uploaded for this entry.")
