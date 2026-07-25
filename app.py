@@ -164,96 +164,124 @@ if selected_role == "patient":
     ])
 
     # --- TAB 1: DAILY CHECK-IN ---
-    with tab_checkin:
-        existing_patients = vitals_col.distinct("patient_name")
+    # --- TAB 1: DAILY CHECK-IN ---
+with tab_checkin:
+    existing_patients = vitals_col.distinct("patient_name")
+    
+    # Allow user to choose between selecting existing profile or creating a new one
+    profile_options = ["➕ Create New Patient Profile"] + existing_patients if existing_patients else ["➕ Create New Patient Profile"]
+    
+    selected_option = st.selectbox(
+        "Select Profile or Register New:",
+        options=profile_options,
+        index=0 if not existing_patients else 1 # Default to existing patient if available
+    )
+
+    if selected_option == "➕ Create New Patient Profile":
+        c_name, c_id = st.columns(2)
+        selected_patient_name = c_name.text_input("Full Name:", value="", placeholder="e.g. Sarah Connor")
+        p_id = c_id.text_input("Patient ID (Optional):", value="PT-" + str(hash(datetime.now()) % 10000))
+        default_tx_date = date.today()
+        is_new_patient = True
+    else:
+        selected_patient_name = selected_option
+        match_doc = vitals_col.find_one({"patient_name": selected_patient_name})
+        p_id = match_doc.get("patient_id", "PT-1001") if match_doc else "PT-1001"
         
-        if existing_patients:
-            selected_patient_name = st.selectbox("Select Patient Profile:", existing_patients)
-            match_doc = vitals_col.find_one({"patient_name": selected_patient_name})
-            p_id = match_doc.get("patient_id", "PT-1001") if match_doc else "PT-1001"
-            default_tx_date = match_doc.get("transplant_date", datetime(2025, 1, 1)) if match_doc else datetime(2025, 1, 1)
+        # Safely extract existing transplant date
+        raw_tx_date = match_doc.get("transplant_date") if match_doc else None
+        if isinstance(raw_tx_date, datetime):
+            default_tx_date = raw_tx_date.date()
+        elif isinstance(raw_tx_date, date):
+            default_tx_date = raw_tx_date
         else:
-            selected_patient_name = st.text_input("Full Name:", value="Sarah Connor")
-            p_id = "PT-9042"
-            default_tx_date = datetime(2025, 1, 1)
-
-        with st.form("patient_checkin_form"):
-            st.subheader("1. Essential Daily Vitals")
-            st.info("💡 Tip: Draw blood labs FIRST before taking your morning Tacrolimus dose!")
-
-            c1, c2 = st.columns(2)
-            weight = c1.number_input("Weight (kg)", value=73.8, step=0.1)
-            temp = c2.number_input("Temperature (°F)", value=98.6, step=0.1)
-
-            c3, c4 = st.columns(2)
-            sbp = c3.number_input("Systolic BP", value=120)
-            dbp = c4.number_input("Diastolic BP", value=80)
-
-            hr = st.number_input("Resting Heart Rate (BPM)", value=72)
-
-            symptoms = st.multiselect("Active Symptoms Today:", [
-                "Low urine output", "Pain over transplant site", "Swelling hands/feet", 
-                "Shortness of breath", "Blood in urine/stool", "Incision redness/leakage", 
-                "Burning urination", "Nausea/Vomiting/Diarrhea"
-            ])
-
-            st.divider()
+            default_tx_date = date(2025, 1, 1)
             
-            # Form sections collapsed by default to prevent UI clutter
-            with st.expander("🧪 Add Blood Labs & Reports (Optional)", expanded=False):
-                tx_date_input = st.date_input("Transplant Date", value=default_tx_date)
-                lab_date_input = st.date_input("Lab Date", value=date.today())
-                creatinine = st.number_input("Creatinine (mg/dL)", value=1.1, step=0.1)
-                tacrolimus = st.number_input("Tacrolimus Level (ng/mL)", value=8.5, step=0.5)
-                bkv_load = st.number_input("BKV PCR Load", value=0, step=100)
-                dsa_status = st.selectbox("DSA Antibodies:", ["Negative", "Positive (Low MFI)", "Positive (High MFI)", "Pending"])
-                uploaded_lab_file = st.file_uploader("Upload Lab PDF/Photo:", type=["pdf", "png", "jpg", "jpeg"], key="lab_u")
-            
-            with st.expander("🖼️ Add Imaging & Diagnostic Scans (Optional)", expanded=False):
-                us_date = st.date_input("Ultrasound Date", value=date.today())
-                us_result = st.text_input("Ultrasound Findings", value="Normal graft, RI=0.64")
-                dxa_score = st.number_input("DXA T-Score", value=-0.8, step=0.1)
-                colonoscopy_date = st.text_input("Colonoscopy Status", value="Cleared")
-                cancer_screening = st.text_input("Cancer Screenings", value="Dermatology: Clear")
-                uploaded_scan_file = st.file_uploader("Upload Scan PDF/Photo:", type=["pdf", "png", "jpg", "jpeg"], key="scan_u")
+        is_new_patient = False
+        st.success(f"Logging check-in for **{selected_patient_name}** ({p_id})")
 
-            submitted = st.form_submit_button("Submit Check-In", use_container_width=True)
-            
-            if submitted:
-                lab_b64, lab_fname = None, None
-                if 'uploaded_lab_file' in locals() and uploaded_lab_file is not None:
-                    lab_b64 = base64.b64encode(uploaded_lab_file.read()).decode('utf-8')
-                    lab_fname = uploaded_lab_file.name
+    with st.form("patient_checkin_form"):
+        st.subheader("1. Essential Daily Vitals")
+        st.info("💡 Tip: Draw blood labs FIRST before taking your morning Tacrolimus dose!")
 
-                scan_b64, scan_fname = None, None
-                if 'uploaded_scan_file' in locals() and uploaded_scan_file is not None:
-                    scan_b64 = base64.b64encode(uploaded_scan_file.read()).decode('utf-8')
-                    scan_fname = uploaded_scan_file.name
+        c1, c2 = st.columns(2)
+        weight = c1.number_input("Weight (kg)", value=70.0, step=0.1)
+        temp = c2.number_input("Temperature (°F)", value=98.6, step=0.1)
 
-                new_log = {
-                    "patient_id": p_id,
-                    "patient_name": selected_patient_name,
-                    "transplant_date": datetime.combine(tx_date_input if 'tx_date_input' in locals() else default_tx_date, datetime.min.time()),
-                    "timestamp": datetime.now(),
-                    "weight_kg": weight,
-                    "systolic_bp": sbp,
-                    "diastolic_bp": dbp,
-                    "heart_rate": hr,
-                    "temperature_f": temp,
-                    "symptoms": symptoms,
-                    "creatinine": creatinine if 'creatinine' in locals() else 1.1,
-                    "tacrolimus": tacrolimus if 'tacrolimus' in locals() else 8.5,
-                    "bkv_load": bkv_load if 'bkv_load' in locals() else 0,
-                    "dsa_status": dsa_status if 'dsa_status' in locals() else "Negative",
-                    "lab_file_base64": lab_b64,
-                    "lab_file_name": lab_fname,
-                    "us_findings": us_result if 'us_result' in locals() else "",
-                    "dxa_score": dxa_score if 'dxa_score' in locals() else -0.8,
-                    "scan_file_base64": scan_b64,
-                    "scan_file_name": scan_fname
-                }
-                vitals_col.insert_one(new_log)
-                st.success("✅ Log entry recorded successfully!")
+        c3, c4 = st.columns(2)
+        sbp = c3.number_input("Systolic BP", value=120)
+        dbp = c4.number_input("Diastolic BP", value=80)
+
+        hr = st.number_input("Resting Heart Rate (BPM)", value=72)
+
+        symptoms = st.multiselect("Active Symptoms Today:", [
+            "Low urine output", "Pain over transplant site", "Swelling hands/feet", 
+            "Shortness of breath", "Blood in urine/stool", "Incision redness/leakage", 
+            "Burning urination", "Nausea/Vomiting/Diarrhea"
+        ])
+
+        st.divider()
+        
+        # Collapsible section for labs / dates
+        with st.expander("🧪 Blood Labs & Transplant Details", expanded=is_new_patient):
+            tx_date_input = st.date_input("Transplant Date", value=default_tx_date)
+            lab_date_input = st.date_input("Lab Date", value=date.today())
+            creatinine = st.number_input("Creatinine (mg/dL)", value=1.1, step=0.1)
+            tacrolimus = st.number_input("Tacrolimus Level (ng/mL)", value=8.5, step=0.5)
+            bkv_load = st.number_input("BKV PCR Load", value=0, step=100)
+            dsa_status = st.selectbox("DSA Antibodies:", ["Negative", "Positive (Low MFI)", "Positive (High MFI)", "Pending"])
+            uploaded_lab_file = st.file_uploader("Upload Lab PDF/Photo:", type=["pdf", "png", "jpg", "jpeg"], key="lab_u")
+        
+        with st.expander("🖼️ Imaging & Diagnostic Scans (Optional)", expanded=False):
+            us_date = st.date_input("Ultrasound Date", value=date.today())
+            us_result = st.text_input("Ultrasound Findings", value="Normal graft, RI=0.64")
+            dxa_score = st.number_input("DXA T-Score", value=-0.8, step=0.1)
+            colonoscopy_date = st.text_input("Colonoscopy Status", value="Cleared")
+            cancer_screening = st.text_input("Cancer Screenings", value="Dermatology: Clear")
+            uploaded_scan_file = st.file_uploader("Upload Scan PDF/Photo:", type=["pdf", "png", "jpg", "jpeg"], key="scan_u")
+
+        submitted = st.form_submit_button("Submit Check-In", use_container_width=True)
+        
+        if submitted:
+            if is_new_patient and not selected_patient_name.strip():
+                st.error("⚠️ Please enter a patient name before submitting!")
+                st.stop()
+
+            lab_b64, lab_fname = None, None
+            if 'uploaded_lab_file' in locals() and uploaded_lab_file is not None:
+                lab_b64 = base64.b64encode(uploaded_lab_file.read()).decode('utf-8')
+                lab_fname = uploaded_lab_file.name
+
+            scan_b64, scan_fname = None, None
+            if 'uploaded_scan_file' in locals() and uploaded_scan_file is not None:
+                scan_b64 = base64.b64encode(uploaded_scan_file.read()).decode('utf-8')
+                scan_fname = uploaded_scan_file.name
+
+            new_log = {
+                "patient_id": p_id,
+                "patient_name": selected_patient_name.strip(),
+                "transplant_date": datetime.combine(tx_date_input, datetime.min.time()),
+                "timestamp": datetime.now(),
+                "weight_kg": weight,
+                "systolic_bp": sbp,
+                "diastolic_bp": dbp,
+                "heart_rate": hr,
+                "temperature_f": temp,
+                "symptoms": symptoms,
+                "creatinine": creatinine,
+                "tacrolimus": tacrolimus,
+                "bkv_load": bkv_load,
+                "dsa_status": dsa_status,
+                "lab_file_base64": lab_b64,
+                "lab_file_name": lab_fname,
+                "us_findings": us_result,
+                "dxa_score": dxa_score,
+                "scan_file_base64": scan_b64,
+                "scan_file_name": scan_fname
+            }
+            vitals_col.insert_one(new_log)
+            st.success(f"✅ Check-in saved for {selected_patient_name}!")
+            st.rerun() # Refresh list automatically so the new user appears in dropdown
 
     # --- TAB 2: CALL COORDINATOR ---
     with tab_call:
