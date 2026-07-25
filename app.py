@@ -4,19 +4,19 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 from pymongo import MongoClient
-from datetime import datetime
+from datetime import datetime, date
 
 # ---------------------------------------------------------
 # 1. Page Configuration
 # ---------------------------------------------------------
 st.set_page_config(
-    page_title="Transplant Care Portal",
+    page_title="Post-Transplant Care Portal",
     page_icon="🩺",
     layout="wide",
     initial_sidebar_state="collapsed"
 )
 
-# Track selected patient and expander state in Session State
+# Initialize Session State
 if "selected_patient" not in st.session_state:
     st.session_state["selected_patient"] = None
 if "show_detail" not in st.session_state:
@@ -37,6 +37,46 @@ client = init_connection()
 db = client["transplant_portal"]
 vitals_col = db["vitals_logs"]
 
+# ---------------------------------------------------------
+# 3. Clinical Logic Helpers
+# ---------------------------------------------------------
+def check_tacrolimus_status(tac_level, transplant_date, log_date):
+    """Evaluates Tacrolimus trough levels against time-based target windows."""
+    if tac_level is None or tac_level == 0:
+        return None, None
+        
+    # Convert dates to datetime for calculation if necessary
+    if isinstance(transplant_date, date) and not isinstance(transplant_date, datetime):
+        transplant_date = datetime.combine(transplant_date, datetime.min.time())
+    if isinstance(log_date, date) and not isinstance(log_date, datetime):
+        log_date = datetime.combine(log_date, datetime.min.time())
+        
+    days_post_op = (log_date - transplant_date).days
+    
+    # Critical Absolute Thresholds
+    if tac_level > 12.0:
+        return "RED", f"Tacrolimus Toxicity High ({tac_level:.1f} ng/mL > 12.0)"
+    if tac_level < 4.0:
+        return "RED", f"Tacrolimus Sub-Therapeutic ({tac_level:.1f} ng/mL < 4.0 — High Rejection Risk)"
+
+    # Time-based Target Windows
+    if days_post_op <= 90:  # Months 1-3
+        if not (8.0 <= tac_level <= 12.0):
+            return "AMBER", f"Tacrolimus Off-Target ({tac_level:.1f} ng/mL | Early Phase Target: 8.0–12.0)"
+    else:  # Maintenance Phase (>3 Months)
+        if not (5.0 <= tac_level <= 8.0):
+            return "AMBER", f"Tacrolimus Off-Target ({tac_level:.1f} ng/mL | Maint. Target: 5.0–8.0)"
+
+    return "GREEN", "Tacrolimus within target window"
+
+# ---------------------------------------------------------
+# 4. Mandatory Clinical Disclaimer Header
+# ---------------------------------------------------------
+st.warning("""
+**⚠️ CLINICAL DECISION SUPPORT DISCLAIMER & NOTICE FOR PROVIDERS**  
+This portal is an automated data aggregation and clinical decision-support demonstration tool. **It does not constitute final medical advice, diagnosis, or automated treatment orders.** Healthcare providers must independently review, verify, and validate all incoming patient parameters, lab values, and flagged triage statuses prior to making clinical management or pharmacological decisions.
+""")
+
 st.title("🩺 Post-Transplant Care Portal")
 
 tab_patient, tab_doctor, tab_protocols = st.tabs([
@@ -46,10 +86,10 @@ tab_patient, tab_doctor, tab_protocols = st.tabs([
 ])
 
 # =========================================================
-# TAB 1: PATIENT ENTRY
+# TAB 1: PATIENT ENTRY (Categorized Sub-Tabs)
 # =========================================================
 with tab_patient:
-    st.subheader("Record Daily Vitals")
+    st.subheader("Record Patient Diagnostics & Vitals")
     
     existing_patients = vitals_col.distinct("patient_name")
     patient_option = st.radio(
@@ -62,51 +102,97 @@ with tab_patient:
         selected_patient_name = st.selectbox("Select Your Name:", existing_patients)
         match_doc = vitals_col.find_one({"patient_name": selected_patient_name})
         p_id = match_doc.get("patient_id", "PT-1001") if match_doc else "PT-1001"
+        default_tx_date = match_doc.get("transplant_date", datetime(2025, 1, 1)) if match_doc else datetime(2025, 1, 1)
     else:
         selected_patient_name = st.text_input("Full Name:", value="Sarah Connor")
         p_id = st.text_input("Patient Medical ID / Chart #:", value="PT-9042")
+        default_tx_date = datetime(2025, 1, 1)
 
-    st.caption("Submit morning vitals prior to taking morning immunosuppressive medications.")
+    p_sub1, p_sub2, p_sub3 = st.tabs([
+        "🩸 Daily Vitals", 
+        "🧪 Blood, Urine & Immuno Labs", 
+        "🏥 Imaging & Screenings"
+    ])
 
-    with st.form("patient_daily_log"):
-        weight = st.number_input("Weight (kg)", min_value=30.0, max_value=200.0, value=73.8, step=0.1)
-        temp = st.number_input("Temperature (°F)", min_value=95.0, max_value=106.0, value=98.6, step=0.1)
-        
-        sbp = st.number_input("Systolic BP (Top #)", min_value=70, max_value=220, value=120)
-        dbp = st.number_input("Diastolic BP (Bottom #)", min_value=40, max_value=140, value=80)
-        hr = st.number_input("Heart Rate (BPM)", min_value=30, max_value=200, value=72)
+    with st.form("patient_full_entry"):
+        with p_sub1:
+            st.markdown("#### Daily Physical Vitals")
+            c1, c2 = st.columns(2)
+            weight = c1.number_input("Weight (kg)", min_value=30.0, max_value=200.0, value=73.8, step=0.1)
+            temp = c2.number_input("Temperature (°F)", min_value=95.0, max_value=106.0, value=98.6, step=0.1)
+            
+            c3, c4, c5 = st.columns(3)
+            sbp = c3.number_input("Systolic BP (Top)", min_value=70, max_value=220, value=120)
+            dbp = c4.number_input("Diastolic BP (Bottom)", min_value=40, max_value=140, value=80)
+            hr = c5.number_input("Heart Rate (BPM)", min_value=30, max_value=200, value=72)
 
-        symptoms = st.multiselect("Report New Symptoms:", [
-            "Fever or Chills", 
-            "Decreased urine output / Dark urine", 
-            "Pain or tenderness over transplant site",
-            "Swelling in feet, legs, or hands", 
-            "Shortness of breath", 
-            "Incision redness, warmth, or drainage"
-        ])
+            symptoms = st.multiselect("Report New Symptoms:", [
+                "Fever or Chills", 
+                "Decreased urine output / Dark urine", 
+                "Pain or tenderness over transplant site",
+                "Swelling in feet, legs, or hands", 
+                "Shortness of breath", 
+                "Incision redness, warmth, or drainage"
+            ])
 
-        submitted = st.form_submit_button("Submit Daily Log", use_container_width=True)
+        with p_sub2:
+            st.markdown("#### Laboratory & Immunosuppression Levels")
+            tx_date_input = st.date_input("Transplant Date", value=default_tx_date)
+            
+            col_l1, col_l2 = st.columns(2)
+            creatinine = col_l1.number_input("Serum Creatinine (mg/dL)", min_value=0.2, max_value=15.0, value=1.1, step=0.1)
+            tacrolimus = col_l2.number_input("Tacrolimus Trough Level (ng/mL)", min_value=0.0, max_value=30.0, value=8.5, step=0.5)
+            
+            col_l3, col_l4 = st.columns(2)
+            bkv_load = col_l3.number_input("BKV PCR (copies/mL)", min_value=0, max_value=1000000, value=0, step=100)
+            dsa_status = col_l4.selectbox("Donor Specific Antibodies (DSA):", ["Negative", "Positive (Low MFI)", "Positive (High MFI)", "Pending"])
+
+            urine_protein = st.selectbox("Urinalysis Protein:", ["Negative", "Trace", "1+", "2+", "3+"])
+
+        with p_sub3:
+            st.markdown("#### Diagnostic Procedures & Surveillance")
+            col_s1, col_s2 = st.columns(2)
+            us_date = col_s1.date_input("Renal Ultrasound Date")
+            us_result = col_s2.text_input("Ultrasound Findings / RI", value="Normal graft size, RI = 0.64, no hydronephrosis")
+            
+            col_s3, col_s4 = st.columns(2)
+            dxa_score = col_s3.number_input("DXA Scan T-Score", min_value=-5.0, max_value=3.0, value=-0.8, step=0.1)
+            colonoscopy_date = col_s4.text_input("Last Colonoscopy Date/Status", value="Cleared (Next due in 5 yrs)")
+            
+            cancer_screening = st.text_area("Other Cancer Screenings (Dermatology, Mammogram, Pap)", value="Dermatology: Clear; Annual Mammogram: Normal")
+
+        submitted = st.form_submit_button("Submit Complete Entry", use_container_width=True)
         if submitted:
             new_log = {
                 "patient_id": p_id,
                 "patient_name": selected_patient_name,
+                "transplant_date": datetime.combine(tx_date_input, datetime.min.time()),
                 "timestamp": datetime.now(),
                 "weight_kg": weight,
                 "systolic_bp": sbp,
                 "diastolic_bp": dbp,
                 "heart_rate": hr,
                 "temperature_f": temp,
-                "symptoms": symptoms
+                "symptoms": symptoms,
+                "creatinine": creatinine,
+                "tacrolimus": tacrolimus,
+                "bkv_load": bkv_load,
+                "dsa_status": dsa_status,
+                "urine_protein": urine_protein,
+                "us_findings": us_result,
+                "dxa_score": dxa_score,
+                "colonoscopy": colonoscopy_date,
+                "cancer_screening": cancer_screening
             }
             vitals_col.insert_one(new_log)
-            st.success(f"✅ Daily log successfully submitted for {selected_patient_name}!")
+            st.success(f"✅ Records successfully updated for {selected_patient_name}!")
 
 # =========================================================
-# TAB 2: DOCTOR DASHBOARD (Collapsible Inspector)
+# TAB 2: DOCTOR DASHBOARD (Automated Triage Roster)
 # =========================================================
 with tab_doctor:
-    st.subheader("👨‍⚕️ Clinical Triage Roster")
-    st.caption("Tap any patient card below to expand their detailed chart & history.")
+    st.subheader("👨‍⚕️ Clinical Triage & Diagnostic Roster")
+    st.caption("Tap any patient banner below to expand their full lab report, imaging, and vitals.")
 
     patient_names = vitals_col.distinct("patient_name")
     
@@ -115,7 +201,6 @@ with tab_doctor:
     else:
         patient_summaries = []
 
-        # Analyze triage level for each patient
         for name in patient_names:
             p_docs = list(vitals_col.find({"patient_name": name}).sort("timestamp", 1))
             if not p_docs:
@@ -129,23 +214,37 @@ with tab_doctor:
             red_flags = []
             amber_flags = []
 
-            # RED FLAGS
+            # 1. Tacrolimus Automated Check
+            tx_date_val = latest.get("transplant_date", latest['timestamp'])
+            tac_val = latest.get("tacrolimus", 0.0)
+            tac_flag, tac_msg = check_tacrolimus_status(tac_val, tx_date_val, latest['timestamp'])
+            
+            if tac_flag == "RED":
+                red_flags.append(tac_msg)
+            elif tac_flag == "AMBER":
+                amber_flags.append(tac_msg)
+
+            # 2. Vitals & Lab Checks
             if weight_change >= 1.5:
                 red_flags.append(f"Weight Spike (+{weight_change:.1f}kg/24h)")
             if latest['temperature_f'] >= 100.0:
                 red_flags.append(f"Fever ({latest['temperature_f']}°F)")
-            if latest['systolic_bp'] > 150 or latest['systolic_bp'] < 100:
-                red_flags.append(f"Abnormal BP ({latest['systolic_bp']}/{latest['diastolic_bp']})")
+            if latest.get('creatinine', 1.0) >= 1.8:
+                red_flags.append(f"Elevated Creatinine ({latest.get('creatinine')} mg/dL)")
+            if latest.get('bkv_load', 0) >= 10000:
+                red_flags.append(f"High BKV Load ({latest.get('bkv_load')} copies/mL)")
+            if "High MFI" in latest.get('dsa_status', ''):
+                red_flags.append(f"DSA Positive ({latest.get('dsa_status')})")
             if latest.get('symptoms'):
                 red_flags.append(f"Symptoms ({', '.join(latest['symptoms'])})")
 
-            # AMBER FLAGS
+            # 3. Borderline Checks
+            if 1.4 <= latest.get('creatinine', 1.0) < 1.8:
+                amber_flags.append(f"Borderline Creatinine ({latest.get('creatinine')} mg/dL)")
             if latest['heart_rate'] > 100 or latest['heart_rate'] < 55:
                 amber_flags.append(f"Abnormal HR ({latest['heart_rate']} BPM)")
-            if 140 <= latest['systolic_bp'] <= 150:
-                amber_flags.append(f"Borderline BP ({latest['systolic_bp']} Systolic)")
 
-            # Assign Status
+            # Assign Priority
             if red_flags:
                 status_icon = "🔴 RED ALERT"
                 priority = 1
@@ -168,32 +267,24 @@ with tab_doctor:
                 "weight_change": weight_change
             })
 
-        # Sort roster by risk level
         patient_summaries.sort(key=lambda x: x['priority'])
 
-        # Render Clickable Patient Buttons
+        # Render Clickable Patient Banners
         for p in patient_summaries:
             name = p['patient_name']
             status = p['status']
             p_id = p['patient_id']
             
-            if p['red_flags']:
-                summary_line = " | Flags: " + ", ".join(p['red_flags'])
-            elif p['amber_flags']:
-                summary_line = " | Flags: " + ", ".join(p['amber_flags'])
-            else:
-                summary_line = " | Stable"
-
+            summary_line = " | Flags: " + ", ".join(p['red_flags'] if p['red_flags'] else p['amber_flags']) if (p['red_flags'] or p['amber_flags']) else " | All Parameters Stable"
             button_label = f"{status} — {name} (ID: {p_id}){summary_line}"
             
-            # Clicking a button selects the patient and opens the detail view
             if st.button(button_label, key=f"btn_{name}", use_container_width=True):
                 st.session_state["selected_patient"] = name
                 st.session_state["show_detail"] = True
 
         st.divider()
 
-        # Render Detailed Inspector ONLY if a patient is clicked
+        # Collapsible Detailed Inspection View
         if st.session_state["show_detail"] and st.session_state["selected_patient"]:
             selected_name = st.session_state["selected_patient"]
             selected_p = next((p for p in patient_summaries if p['patient_name'] == selected_name), None)
@@ -201,36 +292,43 @@ with tab_doctor:
             if selected_p:
                 l_data = selected_p['latest_data']
 
-                # Collapsible container — expanded=True when triggered by a click
-                with st.expander(f"🔍 Detailed View: {selected_p['patient_name']}", expanded=True):
+                with st.expander(f"🔍 Clinical File: {selected_p['patient_name']}", expanded=True):
                     st.caption(f"Status: **{selected_p['status']}** | Chart ID: `{selected_p['patient_id']}` | Last Log: {l_data['timestamp'].strftime('%Y-%m-%d %H:%M:%S')}")
 
-                    # Highlight Flags
                     if selected_p['red_flags']:
                         st.error("### 🚨 ACTIVE CLINICAL ALERTS\n" + "\n".join([f"- {f}" for f in selected_p['red_flags']]))
                     elif selected_p['amber_flags']:
                         st.warning("### ⚠️ WATCH CONDITIONS\n" + "\n".join([f"- {f}" for f in selected_p['amber_flags']]))
                     else:
-                        st.success("✅ Patient vitals are within normal target range.")
+                        st.success("✅ All vitals and lab parameters are currently within normal target range.")
 
-                    # Metric Tiles
-                    c1, c2, c3, c4 = st.columns(4)
-                    c1.metric("Weight", f"{l_data['weight_kg']} kg", f"{selected_p['weight_change']:+.1f} kg")
-                    c2.metric("Temp", f"{l_data['temperature_f']} °F")
-                    c3.metric("BP", f"{l_data['systolic_bp']}/{l_data['diastolic_bp']}")
-                    c4.metric("Heart Rate", f"{l_data['heart_rate']} BPM")
+                    doc_sub1, doc_sub2, doc_sub3 = st.tabs(["📊 Daily Vitals", "🧪 Lab Results & Drugs", "🏥 Imaging & Screenings"])
 
-                    if l_data.get('symptoms'):
-                        st.error(f"🚨 **Reported Symptoms:** {', '.join(l_data['symptoms'])}")
+                    with doc_sub1:
+                        c1, c2, c3, c4 = st.columns(4)
+                        c1.metric("Weight", f"{l_data['weight_kg']} kg", f"{selected_p['weight_change']:+.1f} kg")
+                        c2.metric("Temp", f"{l_data['temperature_f']} °F")
+                        c3.metric("BP", f"{l_data['systolic_bp']}/{l_data['diastolic_bp']}")
+                        c4.metric("Heart Rate", f"{l_data['heart_rate']} BPM")
+                        
+                        fig = px.line(selected_p['full_df'], x="timestamp", y="weight_kg", title="Fluid Retention & Weight Trend", markers=True)
+                        st.plotly_chart(fig, use_container_width=True)
 
-                    # Historical Trend Chart
-                    fig = px.line(
-                        selected_p['full_df'], x="timestamp", y="weight_kg",
-                        title=f"Fluid Retention & Weight Trend — {selected_p['patient_name']}",
-                        markers=True
-                    )
-                    fig.update_layout(margin=dict(l=10, r=10, t=30, b=10))
-                    st.plotly_chart(fig, use_container_width=True)
+                    with doc_sub2:
+                        l1, l2, l3 = st.columns(3)
+                        l1.metric("Serum Creatinine", f"{l_data.get('creatinine', 'N/A')} mg/dL")
+                        l2.metric("Tacrolimus Level", f"{l_data.get('tacrolimus', 'N/A')} ng/mL")
+                        l3.metric("Urine Protein", f"{l_data.get('urine_protein', 'N/A')}")
+
+                        l4, l5 = st.columns(2)
+                        l4.metric("BKV PCR Load", f"{l_data.get('bkv_load', 0)} copies/mL")
+                        l5.metric("DSA Status", f"{l_data.get('dsa_status', 'N/A')}")
+
+                    with doc_sub3:
+                        st.markdown(f"**Renal Ultrasound:** {l_data.get('us_findings', 'N/A')}")
+                        st.markdown(f"**DXA Bone Density T-Score:** `{l_data.get('dxa_score', 'N/A')}`")
+                        st.markdown(f"**Colonoscopy History:** {l_data.get('colonoscopy', 'N/A')}")
+                        st.markdown(f"**Cancer Screenings:** {l_data.get('cancer_screening', 'N/A')}")
 
 # =========================================================
 # TAB 3: CLINICAL PROTOCOLS
