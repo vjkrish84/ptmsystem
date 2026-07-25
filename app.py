@@ -3,49 +3,46 @@ import certifi
 import base64
 import streamlit as st
 import pandas as pd
-import plotly.express as px
 from pymongo import MongoClient
 from datetime import datetime, date
 
 # ---------------------------------------------------------
-# 1. Mobile-Optimized Page Config & Compact CSS
+# 1. Responsive Page Config & CSS Fixes
 # ---------------------------------------------------------
 st.set_page_config(
     page_title="Post-Transplant Portal",
     page_icon="🩺",
-    layout="centered", # Centered layout works drastically better on mobile devices
+    layout="wide", # Allows broad viewing on desktop, flexes on mobile
     initial_sidebar_state="collapsed"
 )
 
-# Streamlined mobile CSS overrides
+# Fixes header collision and prevents top section cut-offs
 st.markdown("""
     <style>
-    /* Touch-friendly, high-contrast buttons */
+    /* Safely offset page body so top app header doesn't cut off elements */
+    .stMainBlockContainer, .block-container {
+        padding-top: 4.5rem !important;
+        padding-bottom: 2rem !important;
+        max-width: 950px; /* Constrains line length on wide screens */
+        margin: 0 auto;
+    }
+    
+    /* Touch-friendly full-width action buttons */
     .stButton>button {
         width: 100%;
         min-height: 3.2rem;
         font-size: 1.05rem;
         font-weight: 600;
-        border-radius: 10px;
-        margin-top: 4px;
-        margin-bottom: 4px;
-    }
-    
-    /* Reduce excessive vertical whitespace on mobile */
-    .block-container {
-        padding-top: 1.5rem;
-        padding-bottom: 2rem;
-        padding-left: 0.8rem;
-        padding-right: 0.8rem;
+        border-radius: 8px;
     }
 
-    /* Clean mobile card containers */
-    .mobile-card {
+    /* Clean Card Containers */
+    .portal-card {
         background-color: #f8f9fa;
-        border: 1px solid #e9ecef;
-        border-radius: 10px;
-        padding: 12px;
-        margin-bottom: 12px;
+        border-left: 4px solid #0066cc;
+        padding: 1rem;
+        border-radius: 6px;
+        margin-bottom: 1rem;
     }
     </style>
 """, unsafe_allow_html=True)
@@ -57,7 +54,7 @@ st.markdown("""
 def init_connection():
     mongo_uri = os.getenv("MONGO_URI")
     if not mongo_uri:
-        st.error("⚠️ MONGO_URI missing in Secrets.")
+        st.error("⚠️ MONGO_URI missing in Streamlit Secrets.")
         st.stop()
     return MongoClient(mongo_uri, tlsCAFile=certifi.where())
 
@@ -123,8 +120,13 @@ def evaluate_clinical_alerts(latest_doc, prev_doc=None):
     return red_flags, amber_flags, days_post_op
 
 # ---------------------------------------------------------
-# 4. Mobile Top Bar & Navigation
+# 4. Top Header & Disclaimer Section
 # ---------------------------------------------------------
+st.title("🩺 Post-Transplant Portal")
+
+# Prominent, non-truncated clinical warning bar
+st.warning("⚠️ **Clinical Notice:** Decision-support tool only. Providers must independently verify incoming patient logs prior to taking clinical action.")
+
 query_params = st.query_params
 default_role = query_params.get("role", "patient")
 if default_role not in ["patient", "doctor"]:
@@ -140,33 +142,31 @@ selected_role = st.segmented_control(
 
 st.divider()
 
-# Disclaimer inside a clean, closed expander so it doesn't take up full screen height
-with st.expander("⚠️ Clinical Notice & Disclaimer", expanded=False):
-    st.caption("This portal is an automated clinical decision-support tool. It does not constitute final medical advice or treatment orders. Providers must independently verify all incoming data.")
-
 # =========================================================
-# VIEW 1: MOBILE PATIENT PORTAL
+# VIEW 1: PATIENT PORTAL
 # =========================================================
 if selected_role == "patient":
     
-    # Emergency Callout - Compact Popover or Expander
-    with st.expander("🚨 EMERGENCY WARNINGS", expanded=False):
+    # Emergency Warning Section
+    with st.expander("🚨 EMERGENCY RED FLAGS (Click to Expand)", expanded=False):
         st.error("""
-        **GO TO THE NEAREST HOSPITAL IMMEDIATELY IF YOU HAVE:**  
-        Difficulty breathing, heavy bleeding, chest pain, seizures, one-sided weakness, slurred speech, or hit your head.
+        **GO TO THE NEAREST EMERGENCY ROOM IMMEDIATELY IF YOU HAVE:**  
+        • Difficulty breathing or severe chest pain  
+        • Uncontrollable bleeding or severe abdominal pain  
+        • Seizures, sudden weakness, or slurred speech  
+        • Sudden loss of consciousness or head injury
         """)
 
     tab_checkin, tab_call, tab_rules = st.tabs([
-        "📝 Check-In", 
+        "📝 Daily Check-In", 
         "📞 Coordinator", 
         "🛡️ Safety Rules"
     ])
 
-    # --- TAB 1: STREAMLINED CHECK-IN ---
+    # --- TAB 1: DAILY CHECK-IN ---
     with tab_checkin:
         existing_patients = vitals_col.distinct("patient_name")
         
-        # Profile selector
         if existing_patients:
             selected_patient_name = st.selectbox("Select Patient Profile:", existing_patients)
             match_doc = vitals_col.find_one({"patient_name": selected_patient_name})
@@ -177,31 +177,30 @@ if selected_role == "patient":
             p_id = "PT-9042"
             default_tx_date = datetime(2025, 1, 1)
 
-        with st.form("mobile_patient_checkin"):
-            st.markdown("### 1. Daily Vitals")
-            st.caption("💡 Draw blood FIRST before taking morning Tacrolimus!")
+        with st.form("patient_checkin_form"):
+            st.subheader("1. Essential Daily Vitals")
+            st.info("💡 Tip: Draw blood labs FIRST before taking your morning Tacrolimus dose!")
 
-            # 2x2 grid for mobile
-            col1, col2 = st.columns(2)
-            weight = col1.number_input("Weight (kg)", value=73.8, step=0.1)
-            temp = col2.number_input("Temp (°F)", value=98.6, step=0.1)
+            c1, c2 = st.columns(2)
+            weight = c1.number_input("Weight (kg)", value=73.8, step=0.1)
+            temp = c2.number_input("Temperature (°F)", value=98.6, step=0.1)
 
-            col3, col4 = st.columns(2)
-            sbp = col3.number_input("Systolic BP", value=120)
-            dbp = col4.number_input("Diastolic BP", value=80)
+            c3, c4 = st.columns(2)
+            sbp = c3.number_input("Systolic BP", value=120)
+            dbp = c4.number_input("Diastolic BP", value=80)
 
-            hr = st.number_input("Resting HR (BPM)", value=72)
+            hr = st.number_input("Resting Heart Rate (BPM)", value=72)
 
-            symptoms = st.multiselect("Symptoms Today:", [
+            symptoms = st.multiselect("Active Symptoms Today:", [
                 "Low urine output", "Pain over transplant site", "Swelling hands/feet", 
                 "Shortness of breath", "Blood in urine/stool", "Incision redness/leakage", 
                 "Burning urination", "Nausea/Vomiting/Diarrhea"
             ])
 
             st.divider()
-
-            # LABS AND UPLOADS ARE CLOSED BY DEFAULT TO PREVENT CLUTTER
-            with st.expander("🧪 Add Blood Labs & Lab Document (Optional)", expanded=False):
+            
+            # Form sections collapsed by default to prevent UI clutter
+            with st.expander("🧪 Add Blood Labs & Reports (Optional)", expanded=False):
                 tx_date_input = st.date_input("Transplant Date", value=default_tx_date)
                 lab_date_input = st.date_input("Lab Date", value=date.today())
                 creatinine = st.number_input("Creatinine (mg/dL)", value=1.1, step=0.1)
@@ -210,7 +209,7 @@ if selected_role == "patient":
                 dsa_status = st.selectbox("DSA Antibodies:", ["Negative", "Positive (Low MFI)", "Positive (High MFI)", "Pending"])
                 uploaded_lab_file = st.file_uploader("Upload Lab PDF/Photo:", type=["pdf", "png", "jpg", "jpeg"], key="lab_u")
             
-            with st.expander("🖼️ Add Imaging, Ultrasound & Scans (Optional)", expanded=False):
+            with st.expander("🖼️ Add Imaging & Diagnostic Scans (Optional)", expanded=False):
                 us_date = st.date_input("Ultrasound Date", value=date.today())
                 us_result = st.text_input("Ultrasound Findings", value="Normal graft, RI=0.64")
                 dxa_score = st.number_input("DXA T-Score", value=-0.8, step=0.1)
@@ -218,10 +217,9 @@ if selected_role == "patient":
                 cancer_screening = st.text_input("Cancer Screenings", value="Dermatology: Clear")
                 uploaded_scan_file = st.file_uploader("Upload Scan PDF/Photo:", type=["pdf", "png", "jpg", "jpeg"], key="scan_u")
 
-            submitted = st.form_submit_button("Submit Daily Check-In", use_container_width=True)
+            submitted = st.form_submit_button("Submit Check-In", use_container_width=True)
             
             if submitted:
-                # File Encodings
                 lab_b64, lab_fname = None, None
                 if 'uploaded_lab_file' in locals() and uploaded_lab_file is not None:
                     lab_b64 = base64.b64encode(uploaded_lab_file.read()).decode('utf-8')
@@ -255,35 +253,49 @@ if selected_role == "patient":
                     "scan_file_name": scan_fname
                 }
                 vitals_col.insert_one(new_log)
-                st.success("✅ Check-in saved successfully!")
+                st.success("✅ Log entry recorded successfully!")
 
     # --- TAB 2: CALL COORDINATOR ---
     with tab_call:
-        st.subheader("📞 When to Call Immediately")
-        with st.expander("🚨 Rejection Symptoms", expanded=True):
-            st.write("• Less urine output\n• Fatigue or pain over graft\n• Fever ≥100°F\n• Weight gain ≥1.5kg in 1 day\n• Blood in urine")
-        with st.expander("🦠 Infection Symptoms", expanded=True):
-            st.write("• Fever ≥100°F or chills\n• Incision redness/pus\n• Burning urine\n• Shortness of breath / Cough\n• Vomiting / Diarrhea")
+        st.subheader("📞 When to Call Your Coordinator")
+        c1, c2 = st.columns(2)
+        with c1:
+            st.markdown("""
+            **Rejection Indicators:**
+            • Noticeable decrease in urine output  
+            • Pain or severe tenderness over graft  
+            • Fever ≥ 100.0°F  
+            • Rapid weight gain (≥ 1.5 kg in 24 hrs)
+            """)
+        with c2:
+            st.markdown("""
+            **Infection Indicators:**
+            • Chills or temperature spikes  
+            • Redness, swelling, or drainage at incision  
+            • Persistent cough or shortness of breath  
+            • Burning during urination or severe diarrhea
+            """)
 
     # --- TAB 3: SAFETY RULES ---
     with tab_rules:
-        st.subheader("🛡️ Quick Safety Guide")
-        with st.expander("💉 Safe vs Unsafe Vaccines"):
-            st.success("**Safe:** Flu Shot (Injection), Pneumonia, Tdap, Hep B")
-            st.error("**FORBIDDEN (Live):** MMR, FluMist (Nasal), Chickenpox, Shingles")
-        with st.expander("🥗 Nutrition Rules"):
-            st.error("**Avoid:** Grapefruit, NSAIDs (Ibuprofen/Advil), Raw eggs/sushi, Buffets")
+        st.subheader("🛡️ Post-Transplant Guidelines")
+        col_a, col_b = st.columns(2)
+        with col_a:
+            st.success("**Safe Vaccines:** Flu Shot (Injected), Pneumonia, Tdap, Hepatitis B")
+            st.error("**FORBIDDEN Vaccines:** Live vaccines (MMR, Nasal FluMist, Chickenpox, Yellow Fever)")
+        with col_b:
+            st.warning("**Dietary Restrictions:** Avoid Grapefruit/Pomegranate, NSAID pain relievers (Ibuprofen/Advil), and raw/undercooked foods.")
 
 # =========================================================
-# VIEW 2: CLINICAL TRIAGE DASHBOARD
+# VIEW 2: CLINICAL TRIAGE BOARD
 # =========================================================
 elif selected_role == "doctor":
-    st.subheader("👨‍⚕️ Triage Board")
+    st.subheader("👨‍⚕️ Clinical Triage & Monitoring Board")
 
     patient_names = vitals_col.distinct("patient_name")
 
     if not patient_names:
-        st.info("No patient entries logged yet.")
+        st.info("No active patient records available.")
     else:
         for name in patient_names:
             p_docs = list(vitals_col.find({"patient_name": name}).sort("timestamp", 1))
@@ -294,25 +306,23 @@ elif selected_role == "doctor":
             prev = p_docs[-2] if len(p_docs) > 1 else None
             red_flags, amber_flags, days_post_op = evaluate_clinical_alerts(latest, prev)
 
-            # Mobile compact status card
             status_tag = "🔴 RED ALERT" if red_flags else ("🟡 WATCH" if amber_flags else "🟢 STABLE")
             
-            with st.expander(f"{status_tag} — {name} (Day {days_post_op})"):
+            with st.expander(f"{status_tag} — {name} (Day {days_post_op} Post-Op)"):
                 if red_flags:
-                    st.error("🚨 " + ", ".join(red_flags))
+                    st.error("🚨 Red Flags: " + ", ".join(red_flags))
                 if amber_flags:
-                    st.warning("⚠️ " + ", ".join(amber_flags))
+                    st.warning("⚠️ Watch Flags: " + ", ".join(amber_flags))
 
-                c1, c2 = st.columns(2)
-                c1.metric("Weight", f"{latest['weight_kg']} kg")
-                c2.metric("BP", f"{latest['systolic_bp']}/{latest['diastolic_bp']}")
+                m1, m2, m3, m4 = st.columns(4)
+                m1.metric("Weight", f"{latest['weight_kg']} kg")
+                m2.metric("BP", f"{latest['systolic_bp']}/{latest['diastolic_bp']}")
+                m3.metric("Creatinine", f"{latest.get('creatinine', 'N/A')}")
+                m4.metric("Tacrolimus", f"{latest.get('tacrolimus', 'N/A')}")
 
-                c3, c4 = st.columns(2)
-                c3.metric("Creatinine", f"{latest.get('creatinine', 'N/A')}")
-                c4.metric("Tacrolimus", f"{latest.get('tacrolimus', 'N/A')}")
-
-                # Document downloads inside the patient expansion
+                # Download triggers for submitted files
+                d1, d2 = st.columns(2)
                 if latest.get("lab_file_base64"):
-                    st.download_button("📥 Download Lab PDF", base64.b64decode(latest["lab_file_base64"]), file_name=latest.get("lab_file_name", "lab.pdf"))
+                    d1.download_button("📥 Download Lab Report", base64.b64decode(latest["lab_file_base64"]), file_name=latest.get("lab_file_name", "lab.pdf"))
                 if latest.get("scan_file_base64"):
-                    st.download_button("🖼️ Download Radiology Scan", base64.b64decode(latest["scan_file_base64"]), file_name=latest.get("scan_file_name", "scan.pdf"))
+                    d2.download_button("🖼️ Download Diagnostic Scan", base64.b64decode(latest["scan_file_base64"]), file_name=latest.get("scan_file_name", "scan.pdf"))
