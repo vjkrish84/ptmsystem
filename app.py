@@ -1,5 +1,6 @@
 import os
 import certifi
+import base64
 import streamlit as st
 import pandas as pd
 import plotly.express as px
@@ -45,7 +46,6 @@ def check_tacrolimus_status(tac_level, transplant_date, log_date):
     if tac_level is None or tac_level == 0:
         return None, None
         
-    # Convert dates to datetime for calculation if necessary
     if isinstance(transplant_date, date) and not isinstance(transplant_date, datetime):
         transplant_date = datetime.combine(transplant_date, datetime.min.time())
     if isinstance(log_date, date) and not isinstance(log_date, datetime):
@@ -74,7 +74,7 @@ def check_tacrolimus_status(tac_level, transplant_date, log_date):
 # ---------------------------------------------------------
 st.warning("""
 **⚠️ CLINICAL DECISION SUPPORT DISCLAIMER & NOTICE FOR PROVIDERS**  
-This portal is an automated data aggregation and clinical decision-support demonstration tool. **It does not constitute final medical advice, diagnosis, or automated treatment orders.** Healthcare providers must independently review, verify, and validate all incoming patient parameters, lab values, and flagged triage statuses prior to making clinical management or pharmacological decisions.
+This portal is an automated data aggregation and clinical decision-support demonstration tool. **It does not constitute final medical advice, diagnosis, or automated treatment orders.** Healthcare providers must independently review, verify, and validate all incoming patient parameters, lab values, and uploaded documents prior to making clinical management or pharmacological decisions.
 """)
 
 st.title("🩺 Post-Transplant Care Portal")
@@ -86,10 +86,10 @@ tab_patient, tab_doctor, tab_protocols = st.tabs([
 ])
 
 # =========================================================
-# TAB 1: PATIENT ENTRY (Categorized Sub-Tabs)
+# TAB 1: PATIENT ENTRY
 # =========================================================
 with tab_patient:
-    st.subheader("Record Patient Diagnostics & Vitals")
+    st.subheader("Record Patient Diagnostics, Vitals & Upload Reports")
     
     existing_patients = vitals_col.distinct("patient_name")
     patient_option = st.radio(
@@ -110,7 +110,7 @@ with tab_patient:
 
     p_sub1, p_sub2, p_sub3 = st.tabs([
         "🩸 Daily Vitals", 
-        "🧪 Blood, Urine & Immuno Labs", 
+        "🧪 Blood & Lab Reports", 
         "🏥 Imaging & Screenings"
     ])
 
@@ -137,7 +137,10 @@ with tab_patient:
 
         with p_sub2:
             st.markdown("#### Laboratory & Immunosuppression Levels")
-            tx_date_input = st.date_input("Transplant Date", value=default_tx_date)
+            
+            col_d1, col_d2 = st.columns(2)
+            tx_date_input = col_d1.date_input("Transplant Date", value=default_tx_date)
+            lab_date_input = col_d2.date_input("Blood / Lab Sample Date", value=date.today())
             
             col_l1, col_l2 = st.columns(2)
             creatinine = col_l1.number_input("Serum Creatinine (mg/dL)", min_value=0.2, max_value=15.0, value=1.1, step=0.1)
@@ -148,11 +151,14 @@ with tab_patient:
             dsa_status = col_l4.selectbox("Donor Specific Antibodies (DSA):", ["Negative", "Positive (Low MFI)", "Positive (High MFI)", "Pending"])
 
             urine_protein = st.selectbox("Urinalysis Protein:", ["Negative", "Trace", "1+", "2+", "3+"])
+            
+            # File Uploader for Lab Verification
+            uploaded_lab_file = st.file_uploader("📎 Upload Official Lab Report (PDF or Image for Doctor Review):", type=["pdf", "png", "jpg", "jpeg"])
 
         with p_sub3:
             st.markdown("#### Diagnostic Procedures & Surveillance")
             col_s1, col_s2 = st.columns(2)
-            us_date = col_s1.date_input("Renal Ultrasound Date")
+            us_date = col_s1.date_input("Renal Ultrasound Date", value=date.today())
             us_result = col_s2.text_input("Ultrasound Findings / RI", value="Normal graft size, RI = 0.64, no hydronephrosis")
             
             col_s3, col_s4 = st.columns(2)
@@ -163,10 +169,19 @@ with tab_patient:
 
         submitted = st.form_submit_button("Submit Complete Entry", use_container_width=True)
         if submitted:
+            # File processing for MongoDB storage
+            file_data = None
+            file_name = None
+            if uploaded_lab_file is not None:
+                file_bytes = uploaded_lab_file.read()
+                file_data = base64.b64encode(file_bytes).decode('utf-8')
+                file_name = uploaded_lab_file.name
+
             new_log = {
                 "patient_id": p_id,
                 "patient_name": selected_patient_name,
                 "transplant_date": datetime.combine(tx_date_input, datetime.min.time()),
+                "lab_report_date": datetime.combine(lab_date_input, datetime.min.time()),
                 "timestamp": datetime.now(),
                 "weight_kg": weight,
                 "systolic_bp": sbp,
@@ -179,20 +194,23 @@ with tab_patient:
                 "bkv_load": bkv_load,
                 "dsa_status": dsa_status,
                 "urine_protein": urine_protein,
+                "lab_file_base64": file_data,
+                "lab_file_name": file_name,
+                "us_date": datetime.combine(us_date, datetime.min.time()),
                 "us_findings": us_result,
                 "dxa_score": dxa_score,
                 "colonoscopy": colonoscopy_date,
                 "cancer_screening": cancer_screening
             }
             vitals_col.insert_one(new_log)
-            st.success(f"✅ Records successfully updated for {selected_patient_name}!")
+            st.success(f"✅ Records and lab reports successfully submitted for {selected_patient_name}!")
 
 # =========================================================
-# TAB 2: DOCTOR DASHBOARD (Automated Triage Roster)
+# TAB 2: DOCTOR DASHBOARD
 # =========================================================
 with tab_doctor:
     st.subheader("👨‍⚕️ Clinical Triage & Diagnostic Roster")
-    st.caption("Tap any patient banner below to expand their full lab report, imaging, and vitals.")
+    st.caption("Tap any patient banner below to expand their full lab report, imaging, vitals, and uploaded source files.")
 
     patient_names = vitals_col.distinct("patient_name")
     
@@ -216,8 +234,10 @@ with tab_doctor:
 
             # 1. Tacrolimus Automated Check
             tx_date_val = latest.get("transplant_date", latest['timestamp'])
+            lab_date_val = latest.get("lab_report_date", latest['timestamp'])
             tac_val = latest.get("tacrolimus", 0.0)
-            tac_flag, tac_msg = check_tacrolimus_status(tac_val, tx_date_val, latest['timestamp'])
+            
+            tac_flag, tac_msg = check_tacrolimus_status(tac_val, tx_date_val, lab_date_val)
             
             if tac_flag == "RED":
                 red_flags.append(tac_msg)
@@ -293,7 +313,7 @@ with tab_doctor:
                 l_data = selected_p['latest_data']
 
                 with st.expander(f"🔍 Clinical File: {selected_p['patient_name']}", expanded=True):
-                    st.caption(f"Status: **{selected_p['status']}** | Chart ID: `{selected_p['patient_id']}` | Last Log: {l_data['timestamp'].strftime('%Y-%m-%d %H:%M:%S')}")
+                    st.caption(f"Status: **{selected_p['status']}** | Chart ID: `{selected_p['patient_id']}` | Last Updated: {l_data['timestamp'].strftime('%Y-%m-%d %H:%M')}")
 
                     if selected_p['red_flags']:
                         st.error("### 🚨 ACTIVE CLINICAL ALERTS\n" + "\n".join([f"- {f}" for f in selected_p['red_flags']]))
@@ -302,7 +322,7 @@ with tab_doctor:
                     else:
                         st.success("✅ All vitals and lab parameters are currently within normal target range.")
 
-                    doc_sub1, doc_sub2, doc_sub3 = st.tabs(["📊 Daily Vitals", "🧪 Lab Results & Drugs", "🏥 Imaging & Screenings"])
+                    doc_sub1, doc_sub2, doc_sub3 = st.tabs(["📊 Daily Vitals", "🧪 Lab Results & Source File", "🏥 Imaging & Screenings"])
 
                     with doc_sub1:
                         c1, c2, c3, c4 = st.columns(4)
@@ -315,6 +335,9 @@ with tab_doctor:
                         st.plotly_chart(fig, use_container_width=True)
 
                     with doc_sub2:
+                        lab_date_str = l_data.get('lab_report_date').strftime('%Y-%m-%d') if l_data.get('lab_report_date') else "N/A"
+                        st.info(f"📅 **Blood Sample Collection Date:** {lab_date_str}")
+                        
                         l1, l2, l3 = st.columns(3)
                         l1.metric("Serum Creatinine", f"{l_data.get('creatinine', 'N/A')} mg/dL")
                         l2.metric("Tacrolimus Level", f"{l_data.get('tacrolimus', 'N/A')} ng/mL")
@@ -324,8 +347,28 @@ with tab_doctor:
                         l4.metric("BKV PCR Load", f"{l_data.get('bkv_load', 0)} copies/mL")
                         l5.metric("DSA Status", f"{l_data.get('dsa_status', 'N/A')}")
 
+                        st.divider()
+                        st.markdown("#### 📁 Verification & Document Inspector")
+                        file_b64 = l_data.get("lab_file_base64")
+                        file_name = l_data.get("lab_file_name")
+
+                        if file_b64 and file_name:
+                            bytes_decoded = base64.b64decode(file_b64)
+                            st.download_button(
+                                label=f"📥 Download Uploaded Lab Report ({file_name})",
+                                data=bytes_decoded,
+                                file_name=file_name,
+                                mime="application/octet-stream"
+                            )
+                            if file_name.lower().endswith(('.png', '.jpg', '.jpeg')):
+                                st.image(bytes_decoded, caption=f"Uploaded Lab Report: {file_name}", use_column_width=True)
+                        else:
+                            st.warning("⚠️ No physical lab report was uploaded for this record. Please cross-reference manual entries with lab portal if values seem anomalous.")
+
                     with doc_sub3:
-                        st.markdown(f"**Renal Ultrasound:** {l_data.get('us_findings', 'N/A')}")
+                        us_date_str = l_data.get('us_date').strftime('%Y-%m-%d') if l_data.get('us_date') else "N/A"
+                        st.markdown(f"**Renal Ultrasound Date:** {us_date_str}")
+                        st.markdown(f"**Findings:** {l_data.get('us_findings', 'N/A')}")
                         st.markdown(f"**DXA Bone Density T-Score:** `{l_data.get('dxa_score', 'N/A')}`")
                         st.markdown(f"**Colonoscopy History:** {l_data.get('colonoscopy', 'N/A')}")
                         st.markdown(f"**Cancer Screenings:** {l_data.get('cancer_screening', 'N/A')}")
