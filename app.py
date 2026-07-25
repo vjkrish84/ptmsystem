@@ -140,7 +140,7 @@ st.divider()
 
 if "submission_success" in st.session_state:
     st.success(st.session_state["submission_success"])
-    del st.session_state["submission_state"] if "submission_state" in st.session_state else None
+    st.session_state.pop("submission_state", None)  # Cleanly removes key if present
     del st.session_state["submission_success"]
 
 # =========================================================
