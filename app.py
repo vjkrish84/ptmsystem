@@ -505,7 +505,7 @@ with st.popover(f" {role_icons.get(st.session_state.active_role, '⚙️')} S
         st.rerun()
 
 st.markdown('</div>', unsafe_allow_html=True)
-
+active_role = st.session_state.active_role
 # =========================================================
 # ROLE 1: PATIENT PORTAL
 # =========================================================
