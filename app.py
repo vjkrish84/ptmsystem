@@ -456,6 +456,30 @@ def render_diagnostics_viewer(patient_name: str, allow_upload: bool = False, act
                 if r.get("notes"):
                     st.write(f"**Notes:** {r.get('notes')}")
 
+def render_clinical_notes_viewer(patient_name: str):
+    """Retrieves and displays signed clinical consultation notes for the patient."""
+    notes = list(notes_col.find({"patient_name": patient_name}).sort("timestamp", -1))
+    
+    if not notes:
+        st.info("No published clinical notes available at this time.")
+        return
+
+    for n in notes:
+        ts = n.get("timestamp")
+        time_str = ts.strftime("%b %d, %Y at %H:%M UTC") if isinstance(ts, datetime) else "N/A"
+        doc_name = n.get("doctor_name", "Attending Physician")
+        
+        with st.expander(f"📋 Note by {doc_name} — {time_str}", expanded=False):
+            st.markdown(f"**Disposition / Plan:** `{n.get('disposition', 'N/A')}`")
+            st.divider()
+            col_h, col_e = st.columns(2)
+            with col_h:
+                st.markdown("**Subjective History:**")
+                st.write(n.get("history", "N/A"))
+            with col_e:
+                st.markdown("**Objective Examination:**")
+                st.write(n.get("examination", "N/A"))
+
 # ---------------------------------------------------------
 # 5. State Initialization & Role Declarations
 # ---------------------------------------------------------
@@ -603,6 +627,9 @@ if active_role == "Patient Portal":
 
     with st.expander("💬 4. Care Team Communication Hub", expanded=False):
         render_communication_hub(selected_patient, "Patient Portal")
+        
+    with st.expander("📋 5. Published Consultation Notes & Care Plans", expanded=False):
+        render_clinical_notes_viewer(selected_patient)
 
 # =========================================================
 # ROLE 2: CAREGIVER PROXY VIEW
