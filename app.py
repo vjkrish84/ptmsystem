@@ -1028,7 +1028,7 @@ elif active_role == "System Administrator":
     st.header("⚙️ Dynamic System Governance & Rules Engine")
 
     # ---------------------------------------------------------
-    # 1. Live Rules Engine Configuration
+    # 1. Live Rules Engine Configuration & Audit History
     # ---------------------------------------------------------
     with st.expander("📜 1. Live Rules Engine Configuration (RS-DEMO)", expanded=False):
         st.markdown("##### Update Active Rule Thresholds in MongoDB")
@@ -1070,24 +1070,35 @@ elif active_role == "System Administrator":
                 except Exception as e:
                     st.error(f"❌ Failed to update rules: {e}")
 
+        st.divider()
+        st.markdown("##### 🔍 Rules Engine Modification History")
+        rule_audits = list(audit_col.find({"action": "UPDATE_TRIAGE_RULES"}).sort("timestamp", -1))
+        if rule_audits:
+            df_rule_audits = pd.DataFrame(rule_audits)
+            if "timestamp" in df_rule_audits.columns:
+                df_rule_audits["timestamp"] = pd.to_datetime(df_rule_audits["timestamp"]).dt.strftime("%Y-%m-%d %H:%M:%S UTC")
+            if "details" in df_rule_audits.columns:
+                df_rule_audits["details"] = df_rule_audits["details"].apply(lambda x: str(x) if isinstance(x, dict) else x)
+            st.dataframe(df_rule_audits[["timestamp", "actor_role", "actor_id", "details"]], use_container_width=True, hide_index=True)
+        else:
+            st.caption("No prior modification history recorded for rules.")
+
     # ---------------------------------------------------------
-    # 2. Dynamic Custom Parameters Configurator & Directory
+    # 2. Custom Parameter(s) Configurator, Editor, & History
     # ---------------------------------------------------------
     with st.expander("🛠️ 2. Custom Parameter(s) Configurator & Directory", expanded=False):
-        st.caption("Manage existing dynamic parameters or add new ones to patient intake forms in real time.")
+        st.caption("Manage, edit, or add custom parameters to patient intake forms in real time.")
         
-        tab_list, tab_add = st.tabs(["📋 Existing Parameters", "➕ Add New Parameter"])
+        tab_list, tab_edit, tab_add, tab_history = st.tabs(["📋 Existing Parameters", "✏️ Edit Parameter", "➕ Add New Parameter", "📜 Parameter Audit History"])
         
-        # TAB 1: VIEW & MANAGE EXISTING DYNAMIC PARAMETERS
+        existing_params = list(db["schema_config"].find({"entity": "patient_input"}))
+        param_names = [p["field_name"] for p in existing_params]
+
+        # TAB 1: VIEW EXISTING
         with tab_list:
-            existing_params = list(db["schema_config"].find({"entity": "patient_input"}))
-            
             if not existing_params:
                 st.info("No custom dynamic parameters defined yet.")
             else:
-                st.markdown("##### Currently Active Custom Parameters")
-                
-                # Display table of active parameters
                 df_params = pd.DataFrame(existing_params)
                 target_param_cols = ["field_name", "field_type", "unit"]
                 df_params_safe = df_params.reindex(columns=target_param_cols)
@@ -1097,32 +1108,68 @@ elif active_role == "System Administrator":
                 st.divider()
                 st.markdown("##### 🗑️ Remove Parameter")
                 col_del_select, col_del_btn = st.columns([3, 1])
-                
-                param_names = [p["field_name"] for p in existing_params]
                 to_delete = col_del_select.selectbox("Select Parameter to Remove:", options=param_names, key="del_param_select")
                 
                 if col_del_btn.button("Delete Parameter", type="secondary"):
                     db["schema_config"].delete_one({"field_name": to_delete, "entity": "patient_input"})
-                    
-                    log_audit_event("Admin", "ADMIN-01", "DELETE_CUSTOM_MARKER", {
-                        "field_name": to_delete
-                    })
-                    
+                    log_audit_event("Admin", "ADMIN-01", "DELETE_CUSTOM_MARKER", {"field_name": to_delete})
                     st.toast(f"🗑️ Parameter '{to_delete}' removed!", icon="⚠️")
                     st.success(f"Successfully deleted '{to_delete}' from patient intake forms.")
                     st.rerun()
 
-        # TAB 2: ADD NEW DYNAMIC PARAMETER
+        # TAB 2: EDIT EXISTING PARAMETER
+        with tab_edit:
+            if not existing_params:
+                st.info("No parameters available to edit.")
+            else:
+                selected_to_edit = st.selectbox("Select Parameter to Edit:", options=param_names, key="edit_param_select")
+                current_p_doc = next((p for p in existing_params if p["field_name"] == selected_to_edit), {})
+                
+                with st.form("edit_custom_param_form"):
+                    edit_name = st.text_input("Parameter Name:", value=current_p_doc.get("field_name", ""))
+                    edit_type = st.selectbox("Data Type:", ["Number", "Text", "Select"], index=["Number", "Text", "Select"].index(current_p_doc.get("field_type", "Number")) if current_p_doc.get("field_type") in ["Number", "Text", "Select"] else 0)
+                    edit_unit = st.text_input("Unit:", value=current_p_doc.get("unit", ""))
+                    
+                    if st.form_submit_button("Save Parameter Updates"):
+                        if edit_name.strip():
+                            # If name changed, remove old document to avoid duplicate keys
+                            if selected_to_edit != edit_name.strip():
+                                db["schema_config"].delete_one({"field_name": selected_to_edit, "entity": "patient_input"})
+                            
+                            db["schema_config"].update_one(
+                                {"field_name": edit_name.strip(), "entity": "patient_input"},
+                                {"$set": {
+                                    "field_name": edit_name.strip(),
+                                    "field_type": edit_type,
+                                    "unit": edit_unit.strip(),
+                                    "entity": "patient_input",
+                                    "updated_at": datetime.now(timezone.utc)
+                                }},
+                                upsert=True
+                            )
+                            log_audit_event("Admin", "ADMIN-01", "UPDATE_CUSTOM_MARKER", {
+                                "old_name": selected_to_edit,
+                                "new_name": edit_name.strip(),
+                                "field_type": edit_type,
+                                "unit": edit_unit.strip()
+                            })
+                            st.toast(f"✅ Parameter '{edit_name}' updated!", icon="🛠️")
+                            st.success(f"Successfully updated parameter configuration for '{edit_name}'!")
+                            st.rerun()
+                        else:
+                            st.warning("Parameter name cannot be blank.")
+
+        # TAB 3: ADD NEW PARAMETER
         with tab_add:
             col1, col2, col3 = st.columns([2, 2, 1])
             with col1:
-                new_field_name = st.text_input("Parameter Name (e.g. Tacrolimus Trough)")
+                new_field_name = st.text_input("Parameter Name (e.g. Tacrolimus Trough)", key="add_p_name")
             with col2:
-                new_field_type = st.selectbox("Data Type", ["Number", "Text", "Select"])
+                new_field_type = st.selectbox("Data Type", ["Number", "Text", "Select"], key="add_p_type")
             with col3:
-                new_field_unit = st.text_input("Unit (e.g. ng/mL)")
+                new_field_unit = st.text_input("Unit (e.g. ng/mL)", key="add_p_unit")
 
-            if st.button("➕ Add Parameter to Patient Form", type="primary"):
+            if st.button("➕ Add Parameter to Patient Form", type="primary", key="add_p_btn"):
                 if new_field_name.strip():
                     try:
                         db["schema_config"].update_one(
@@ -1135,13 +1182,11 @@ elif active_role == "System Administrator":
                             }},
                             upsert=True
                         )
-                        
                         log_audit_event("Admin", "ADMIN-01", "CREATE_CUSTOM_MARKER", {
                             "field_name": new_field_name.strip(),
                             "field_type": new_field_type,
                             "unit": new_field_unit.strip()
                         })
-                        
                         st.toast(f"✅ Marker '{new_field_name}' added!", icon="🧪")
                         st.success(f"✅ Added parameter '{new_field_name}' dynamically and committed to Audit Trail!")
                         st.rerun()
@@ -1149,6 +1194,20 @@ elif active_role == "System Administrator":
                         st.error(f"❌ Database write error: {e}")
                 else:
                     st.warning("⚠️ Please provide a valid parameter name before saving.")
+
+        # TAB 4: PARAMETER AUDIT HISTORY
+        with tab_history:
+            st.markdown("##### 📜 Detailed Custom Marker Governance Audit History")
+            marker_audits = list(audit_col.find({"action": {"$in": ["CREATE_CUSTOM_MARKER", "UPDATE_CUSTOM_MARKER", "DELETE_CUSTOM_MARKER"]}}).sort("timestamp", -1))
+            if marker_audits:
+                df_m_audits = pd.DataFrame(marker_audits)
+                if "timestamp" in df_m_audits.columns:
+                    df_m_audits["timestamp"] = pd.to_datetime(df_m_audits["timestamp"]).dt.strftime("%Y-%m-%d %H:%M:%S UTC")
+                if "details" in df_m_audits.columns:
+                    df_m_audits["details"] = df_m_audits["details"].apply(lambda x: str(x) if isinstance(x, dict) else x)
+                st.dataframe(df_m_audits[["timestamp", "actor_role", "action", "details"]], use_container_width=True, hide_index=True)
+            else:
+                st.caption("No audit logs found for custom parameter modifications.")
 
     # ---------------------------------------------------------
     # 3. Registered Patient Directory
@@ -1171,12 +1230,8 @@ elif active_role == "System Administrator":
         logs = list(audit_col.find().sort("timestamp", -1))
         if logs:
             df_logs = pd.DataFrame(logs)
-            
-            # Format timestamp cleanly
             if "timestamp" in df_logs.columns:
                 df_logs["timestamp"] = pd.to_datetime(df_logs["timestamp"]).dt.strftime("%Y-%m-%d %H:%M:%S UTC")
-                
-            # Stringify details dict so pandas displays clean JSON text in tables
             if "details" in df_logs.columns:
                 df_logs["details"] = df_logs["details"].apply(lambda x: str(x) if isinstance(x, dict) else x)
 
@@ -1185,5 +1240,3 @@ elif active_role == "System Administrator":
             st.dataframe(df_audit_safe, use_container_width=True)
         else:
             st.caption("No audit events logged yet.")
-
-    
