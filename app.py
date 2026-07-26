@@ -790,7 +790,7 @@ elif active_role == "Doctor (Nephrologist)":
             with st.expander("📊 2. Historical Vitals & Trend Analytics", expanded=False):
                 render_vitals_trends(p_name)
 
-            with st.expander("🧪 3. Dynamic Custom Markers & Admin-Defined Parameters", expanded=False):
+            with st.expander("🧪 3. Custom Markers", expanded=False):
                 st.caption("Real-time telemetry for dynamic, schema-less parameters added via System Admin.")
                 
                 # Query patient vitals logs sorted by timestamp
@@ -1064,28 +1064,7 @@ elif active_role == "System Administrator":
                 st.success(" ✅ Rules engine threshold updated in MongoDB and audit log!")
                 st.rerun()
 
-    with st.expander("👥 2. Registered Patient Directory", expanded=False):
-        all_patients = list(patients_col.find({}, {"_id": 0}))
-        if all_patients:
-            df_patients = pd.DataFrame(all_patients)
-            target_cols = ["patient_name", "patient_id", "organ_type", "transplant_date", "allergies"]
-            df_safe = df_patients.reindex(columns=target_cols)
-            st.dataframe(df_safe, use_container_width=True)
-        else:
-            st.caption("No patient profiles registered.")
-
-    with st.expander("🛡️ 3. Live System Audit Logs", expanded=False):
-        st.markdown("##### 🔍 Global Immutable Audit Trail")
-        logs = list(audit_col.find().sort("timestamp", -1))
-        if logs:
-            df_logs = pd.DataFrame(logs)
-            target_audit_cols = ["timestamp", "actor_role", "actor_id", "action", "details"]
-            df_audit_safe = df_logs.reindex(columns=target_audit_cols)
-            st.dataframe(df_audit_safe, use_container_width=True)
-        else:
-            st.caption("No audit events logged yet.")
-
-    with st.expander("🛠️ Dynamic Schema & Field Configurator", expanded=False):
+    with st.expander("🛠️ 2. Custom Parameter(s) To be Evaluated", expanded=False):
         st.caption("Add new parameters to the patient intake forms in real time.")
         
         col1, col2, col3 = st.columns([2, 2, 1])
@@ -1110,3 +1089,26 @@ elif active_role == "System Administrator":
                 )
                 st.success(f"Added '{new_field_name}' dynamically!")
                 st.rerun()
+    
+    with st.expander("👥 3. Registered Patient Directory", expanded=False):
+        all_patients = list(patients_col.find({}, {"_id": 0}))
+        if all_patients:
+            df_patients = pd.DataFrame(all_patients)
+            target_cols = ["patient_name", "patient_id", "organ_type", "transplant_date", "allergies"]
+            df_safe = df_patients.reindex(columns=target_cols)
+            st.dataframe(df_safe, use_container_width=True)
+        else:
+            st.caption("No patient profiles registered.")
+
+    with st.expander("🛡️ 4. Live System Audit Logs", expanded=False):
+        st.markdown("##### 🔍 Global Immutable Audit Trail")
+        logs = list(audit_col.find().sort("timestamp", -1))
+        if logs:
+            df_logs = pd.DataFrame(logs)
+            target_audit_cols = ["timestamp", "actor_role", "actor_id", "action", "details"]
+            df_audit_safe = df_logs.reindex(columns=target_audit_cols)
+            st.dataframe(df_audit_safe, use_container_width=True)
+        else:
+            st.caption("No audit events logged yet.")
+
+    
