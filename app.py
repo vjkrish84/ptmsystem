@@ -17,18 +17,6 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-
-def render_clinical_disclaimer():
-    """Renders a persistent, regulatory-compliant clinical warning banner."""
-    st.warning(
-        "⚠️ **CLINICAL DECISION-SUPPORT DISCLAIMER:** "
-        "This application is an auxiliary clinical decision-support tool intended to assist health professionals. "
-        "It does **not** replace independent clinical evaluation, direct physical examination, or professional medical judgment. "
-        "All automated triage statuses (RED/AMBER/GREEN), lab trend evaluations, medication interaction flags, and rule-based warnings "
-        "must be independently verified by a licensed clinician prior to making any treatment, prescription, or intervention decisions.",
-        icon="🩺"
-    )
-    
 def inject_custom_design():
     """Injects responsive CSS for mobile viewports, single-column stacking, and typography."""
     st.markdown("""
@@ -39,7 +27,6 @@ def inject_custom_design():
         font-family: 'Inter', sans-serif;
     }
     
-    /* Responsive adjustment for mobile screens */
     @media (max-width: 768px) {
         [data-testid="column"] {
             width: 100% !important;
@@ -55,7 +42,6 @@ def inject_custom_design():
         }
     }
 
-    /* Custom Triage Ribbon Styling */
     .ribbon-red {
         background-color: #ffebe9;
         color: #cf222e;
@@ -115,7 +101,7 @@ notes_col = db["clinical_notes"]
 audit_col = db["audit_logs"]
 rules_col = db["ruleset_versions"]
 patients_col = db["patient_profiles"]
-diagnostics_col = db["diagnostic_reports"]  # Labs, Urinalysis, Imaging Reports
+diagnostics_col = db["diagnostic_reports"]
 
 # Ensure Active Rule Set Document Exists
 if rules_col.count_documents({}) == 0:
@@ -156,7 +142,7 @@ def render_clinical_disclaimer():
     st.warning(
         "⚠️ **CLINICAL DECISION-SUPPORT DISCLAIMER:** "
         "This system is an auxiliary clinical decision-support tool. "
-        "It does not replace independent clinical evaluation, direct patient examination, or professional medical judgment. "
+        "It does not replace independent clinical evaluation, direct physical examination, or professional medical judgment. "
         "All automated triage scoring, lab/imaging reports, and interaction warnings must be verified by a licensed clinician prior to clinical intervention.",
         icon="🩺"
     )
@@ -205,6 +191,9 @@ def create_new_patient_profile(name, p_id, organ, tx_date, allergies_list, initi
 
 def evaluate_clinical_triage(latest_doc, prev_doc=None):
     """Evaluates triage status dynamically using the active Mongo rule set."""
+    if not latest_doc:
+        return "GREEN", [], [], ["No vital records available."]
+
     active_ruleset = rules_col.find_one({"active": True}) or {}
     params = active_ruleset.get("parameters", {
         "weight_spike_kg": 1.5, "fever_temp_f": 100.0,
@@ -244,8 +233,59 @@ def evaluate_clinical_triage(latest_doc, prev_doc=None):
         return "AMBER", red_flags, amber_flags, explanations
     return "GREEN", red_flags, amber_flags, explanations
 
+def render_vitals_trends(patient_name: str):
+    """Generates interactive Plotly trends showing ALL historical vital entries."""
+    logs = list(vitals_col.find({"patient_name": patient_name}).sort("timestamp", 1))
+    
+    if not logs:
+        st.info(f"No historical trends available for {patient_name}.")
+        return
+
+    df = pd.DataFrame(logs)
+    df["Formatted_Time"] = df["timestamp"].dt.strftime("%b %d, %H:%M")
+
+    col_t1, col_t2 = st.columns(2)
+
+    with col_t1:
+        # Weight & Temperature Trend
+        fig1 = go.Figure()
+        fig1.add_trace(go.Scatter(x=df["Formatted_Time"], y=df["weight_kg"], mode="lines+markers", name="Weight (kg)", line=dict(color="#1f77b4", width=3)))
+        fig1.add_trace(go.Scatter(x=df["Formatted_Time"], y=df["temperature_f"], mode="lines+markers", name="Temp (°F)", yaxis="y2", line=dict(color="#ff7f0e", width=2, dash="dash")))
+        
+        fig1.update_layout(
+            title=f"📈 Weight & Temperature History ({len(df)} Records)",
+            xaxis_title="Time of Entry",
+            yaxis=dict(title="Weight (kg)"),
+            yaxis2=dict(title="Temp (°F)", overlaying="y", side="right"),
+            height=320,
+            margin=dict(l=20, r=20, t=40, b=20)
+        )
+        st.plotly_chart(fig1, use_container_width=True)
+
+    with col_t2:
+        # Tacrolimus & Creatinine Trend
+        fig2 = go.Figure()
+        fig2.add_trace(go.Scatter(x=df["Formatted_Time"], y=df["tacrolimus"], mode="lines+markers", name="Tacrolimus (ng/mL)", line=dict(color="#2ca02c", width=3)))
+        fig2.add_trace(go.Scatter(x=df["Formatted_Time"], y=df["creatinine"], mode="lines+markers", name="Creatinine (mg/dL)", yaxis="y2", line=dict(color="#d62728", width=3)))
+        
+        fig2.update_layout(
+            title="🧪 Tacrolimus & Serum Creatinine Labs",
+            xaxis_title="Time of Entry",
+            yaxis=dict(title="Tacrolimus"),
+            yaxis2=dict(title="Creatinine", overlaying="y", side="right"),
+            height=320,
+            margin=dict(l=20, r=20, t=40, b=20)
+        )
+        st.plotly_chart(fig2, use_container_width=True)
+
+    st.markdown("##### 📜 Full Chronological Entry History")
+    display_df = df[["timestamp", "weight_kg", "systolic_bp", "diastolic_bp", "temperature_f", "heart_rate", "tacrolimus", "creatinine", "symptoms"]].copy()
+    display_df["timestamp"] = display_df["timestamp"].dt.strftime("%Y-%m-%d %H:%M UTC")
+    display_df.columns = ["Timestamp", "Weight (kg)", "Sys BP", "Dia BP", "Temp (°F)", "Heart Rate", "Tacrolimus", "Creatinine", "Reported Symptoms"]
+    st.dataframe(display_df, use_container_width=True)
+
 # ---------------------------------------------------------
-# 4. Shared Messaging Component
+# 4. Shared Components
 # ---------------------------------------------------------
 def render_communication_hub(patient_name: str, active_role: str):
     st.markdown("#### 💬 Care Team Messages")
@@ -280,12 +320,9 @@ def render_communication_hub(patient_name: str, active_role: str):
                     "timestamp": datetime.now(timezone.utc)
                 })
                 log_audit_event(active_role, "LOCAL-USER", "SEND_MESSAGE", {"patient": patient_name})
-                st.success("Transmitted.")
+                st.success(" ✅ Message transmitted and recorded in message history!")
                 st.rerun()
 
-# ---------------------------------------------------------
-# 5. Shared Diagnostic Reports Component (Labs, UA, Imaging)
-# ---------------------------------------------------------
 def render_diagnostics_viewer(patient_name: str, allow_upload: bool = False, actor_role: str = "Patient"):
     st.markdown(f"#### 🔬 Diagnostic Reports & Imaging Directory: **{patient_name}**")
 
@@ -296,7 +333,6 @@ def render_diagnostics_viewer(patient_name: str, allow_upload: bool = False, act
             d_file = st.file_uploader("Attach Report File (PDF/PNG/JPG):", type=["pdf", "png", "jpg"])
             d_notes = st.text_area("Clinical Notes / Finding Summary:")
             
-            # Interactive fields depending on study category
             col_a, col_b = st.columns(2)
             c_val1 = col_a.number_input("Serum Creatinine (mg/dL) [Lab]", value=1.2, step=0.1)
             c_val2 = col_b.number_input("Tacrolimus Level (ng/mL) [Lab]", value=7.5, step=0.1)
@@ -321,14 +357,21 @@ def render_diagnostics_viewer(patient_name: str, allow_upload: bool = False, act
                 }
                 diagnostics_col.insert_one(report_doc)
                 
-                # Update latest vitals log with new lab values
-                vitals_col.update_one(
-                    {"patient_name": patient_name},
-                    {"$set": {"creatinine": c_val1, "tacrolimus": c_val2}},
-                    upsert=True
-                )
+                # Create a new vital log update reflecting lab values
+                vitals_col.insert_one({
+                    "patient_name": patient_name,
+                    "timestamp": datetime.now(timezone.utc),
+                    "weight_kg": 70.0,
+                    "temperature_f": 98.6,
+                    "heart_rate": 72,
+                    "systolic_bp": 120,
+                    "diastolic_bp": 80,
+                    "symptoms": ["Lab Update"],
+                    "creatinine": c_val1,
+                    "tacrolimus": c_val2
+                })
                 log_audit_event(actor_role, "USER-LOCAL", "UPLOAD_DIAGNOSTIC", {"patient": patient_name, "category": d_category})
-                st.success("Diagnostic report uploaded and synced to profile.")
+                st.success(f"✅ {d_category} successfully uploaded and saved to MongoDB!")
                 st.rerun()
 
     st.divider()
@@ -355,7 +398,7 @@ def render_diagnostics_viewer(patient_name: str, allow_upload: bool = False, act
                     st.write(f"**Notes:** {r.get('notes')}")
 
 # ---------------------------------------------------------
-# 6. Sidebar Navigation
+# 5. Sidebar Navigation
 # ---------------------------------------------------------
 st.sidebar.title("🩺 Portal Navigation")
 
@@ -372,16 +415,7 @@ active_role = st.sidebar.radio(
 
 st.sidebar.divider()
 active_rule_doc = rules_col.find_one({"active": True}) or {}
-# render_clinical_disclaimer()
 st.sidebar.caption(f"Active Rule Version: **{active_rule_doc.get('ruleset_id', 'N/A')}**")
-st.sidebar.warning(
-    "⚠️ **CLINICAL DECISION-SUPPORT DISCLAIMER:** "
-    "This application is an auxiliary clinical decision-support tool intended to assist health professionals. "
-    "It does **not** replace independent clinical evaluation, direct physical examination, or professional medical judgment. "
-    "All automated triage statuses (RED/AMBER/GREEN), lab trend evaluations, medication interaction flags, and rule-based warnings "
-    "must be independently verified by a licensed clinician prior to making any treatment, prescription, or intervention decisions.",
-    icon="🩺"
-)
 
 all_registered_patients = sorted(patients_col.distinct("patient_name")) or ["Sarah Connor"]
 
@@ -412,7 +446,7 @@ if active_role == "Patient Portal":
                     )
                     if success:
                         log_audit_event("Patient", np_name, "PATIENT_REGISTERED", {"organ": np_organ})
-                        st.success(msg)
+                        st.success(f"✅ {msg}")
                         st.rerun()
                     else:
                         st.error(msg)
@@ -436,6 +470,9 @@ if active_role == "Patient Portal":
             ])
 
             if st.form_submit_button("Submit Daily Vitals"):
+                # Fetch latest Tac/Creatinine baselines to retain trend continuity
+                latest_existing = vitals_col.find_one({"patient_name": selected_patient}, sort=[("timestamp", -1)]) or {}
+                
                 log_doc = {
                     "patient_id": p_profile.get("patient_id", "PT-1001"),
                     "patient_name": selected_patient,
@@ -446,40 +483,19 @@ if active_role == "Patient Portal":
                     "systolic_bp": int(sbp),
                     "diastolic_bp": int(dbp),
                     "symptoms": symptoms,
-                    "creatinine": 1.2,
-                    "tacrolimus": 7.5
+                    "creatinine": latest_existing.get("creatinine", 1.2),
+                    "tacrolimus": latest_existing.get("tacrolimus", 7.5)
                 }
                 vitals_col.insert_one(log_doc)
-                log_audit_event("Patient", selected_patient, "SUBMIT_VITALS", {})
-                st.success("Vitals successfully saved to MongoDB!")
+                log_audit_event("Patient", selected_patient, "SUBMIT_VITALS", {"weight": weight, "temp": temp})
+                st.success(f"✅ Vitals successfully saved to MongoDB for {selected_patient}!")
                 st.rerun()
 
-    with st.expander("🧪 2. Upload & View Diagnostic Reports (Labs / Urinalysis / Imaging)", expanded=False):
+    with st.expander("📊 2. Historical Vitals Log & Multi-Entry Trend Charts", expanded=True):
+        render_vitals_trends(selected_patient)
+
+    with st.expander("🧪 3. Upload & View Diagnostic Reports (Labs / Urinalysis / Imaging)", expanded=False):
         render_diagnostics_viewer(selected_patient, allow_upload=True, actor_role="Patient")
-
-    with st.expander("📊 3. My Logged Records & Signed Doctor Notes", expanded=False):
-        p_logs = list(vitals_col.find({"patient_name": selected_patient}).sort("timestamp", -1))
-        
-        if p_logs:
-            latest = p_logs[0]
-            st.caption(f"Last record updated: {latest['timestamp'].strftime('%Y-%m-%d %H:%M UTC')}")
-            m1, m2, m3, m4 = st.columns(4)
-            m1.metric("Weight", f"{latest.get('weight_kg')} kg")
-            m2.metric("BP", f"{latest.get('systolic_bp')}/{latest.get('diastolic_bp')}")
-            m3.metric("Temp", f"{latest.get('temperature_f')} °F")
-            m4.metric("Heart Rate", f"{latest.get('heart_rate')} BPM")
-
-        st.divider()
-        st.markdown("##### Published Clinical Notes from Doctor")
-        p_notes = list(notes_col.find({"patient_name": selected_patient}).sort("timestamp", -1))
-        if p_notes:
-            for note in p_notes:
-                st.info(f"🔒 **Signed Consultation Note** ({note['timestamp'].strftime('%Y-%m-%d %H:%M UTC')})\n\n"
-                        f"**Attending:** {note.get('doctor_name')}\n\n"
-                        f"**Assessment:** {note.get('examination')}\n\n"
-                        f"**Plan/Disposition:** {note.get('disposition')}")
-        else:
-            st.caption("No published clinical notes available.")
 
     with st.expander("💬 4. Care Team Communication Hub", expanded=False):
         render_communication_hub(selected_patient, "Patient Portal")
@@ -492,17 +508,9 @@ elif active_role == "Caregiver Proxy View":
     st.info("🔒 Scoped Viewing Mode: Access restricted to authorized patient profiles.")
 
     patient_name = st.selectbox("Select Patient Profile:", options=all_registered_patients)
-    p_logs = list(vitals_col.find({"patient_name": patient_name}).sort("timestamp", -1))
 
-    with st.expander("📊 Patient Vital Trends", expanded=True):
-        if p_logs:
-            latest = p_logs[0]
-            c1, c2, c3 = st.columns(3)
-            c1.metric("Weight", f"{latest.get('weight_kg')} kg")
-            c2.metric("BP", f"{latest.get('systolic_bp')}/{latest.get('diastolic_bp')}")
-            c3.metric("Temp", f"{latest.get('temperature_f')} °F")
-        else:
-            st.caption("No records available for this patient.")
+    with st.expander("📊 Patient Vital Trends & Full Entry Log", expanded=True):
+        render_vitals_trends(patient_name)
 
     with st.expander("🧪 Diagnostic Reports", expanded=False):
         render_diagnostics_viewer(patient_name, allow_upload=False, actor_role="Caregiver")
@@ -519,21 +527,17 @@ elif active_role == "Doctor (Nephrologist)":
     
     st.caption("📱 **Mobile-Optimized Patient Flight Board**: Expand any patient profile below, then open specific sub-sections as needed.")
 
-    # Loop through all registered patients
     for p_name in all_registered_patients:
         patient_doc = patients_col.find_one({"patient_name": p_name}) or {}
         logs = list(vitals_col.find({"patient_name": p_name}).sort("timestamp", -1))
         latest = logs[0] if logs else {}
         prev = logs[1] if len(logs) > 1 else None
 
-        # Evaluate clinical triage status against Mongo ruleset
         status_code, red_flags, amber_flags, explanations = evaluate_clinical_triage(latest, prev)
 
-        # Check for manual overrides stored in latest vital record
         if latest.get("override_status"):
             status_code = latest.get("override_status")
 
-        # Map RGB Status to Header Badges
         if status_code == "RED":
             status_badge = "🔴 RED ALERT"
             summary_flags = f" — {', '.join(red_flags)}" if red_flags else " — Critical Review Required"
@@ -546,10 +550,9 @@ elif active_role == "Doctor (Nephrologist)":
 
         accordion_title = f"{status_badge} | {p_name} ({patient_doc.get('organ_type', 'Organ Transplant')}){summary_flags}"
 
-        # Level 1 Accordion: Main Patient Card (Collapsed by default so page stays compact)
+        # Level 1 Accordion: Main Patient Card
         with st.expander(accordion_title, expanded=False):
             
-            # Inline Status Banner
             if status_code == "RED":
                 st.markdown(f'<div class="ribbon-red">🔴 CRITICAL TRIAGE ALERT: {", ".join(red_flags) or "Requires Immediate Intervention"}</div>', unsafe_allow_html=True)
             elif status_code == "AMBER":
@@ -557,7 +560,7 @@ elif active_role == "Doctor (Nephrologist)":
             else:
                 st.markdown('<div class="ribbon-green">🟢 STABLE PATIENT STATUS: All vital signs within threshold bounds</div>', unsafe_allow_html=True)
 
-            # Level 2 Sub-Accordion 1: Triage Rules & Manual Override
+            # Sub-Accordion 1: Triage Logic Explanations & Manual Override
             with st.expander("🚨 1. Triage Logic Explanations & Manual Status Override", expanded=False):
                 if explanations:
                     for exp in explanations:
@@ -573,26 +576,18 @@ elif active_role == "Doctor (Nephrologist)":
                     if latest:
                         vitals_col.update_one({"_id": latest["_id"]}, {"$set": {"override_status": override_val, "override_reason": override_reason}})
                         log_audit_event("Doctor", "DOC-NEPH-01", "OVERRIDE_TRIAGE", {"patient": p_name, "status": override_val})
-                        st.success(f"Status overridden to {override_val} for {p_name}.")
+                        st.success(f" ✅ Status overridden to {override_val} for {p_name} and recorded in audit log!")
                         st.rerun()
 
-            # Level 2 Sub-Accordion 2: Latest Vitals Quick Snapshot
-            with st.expander("📊 2. Latest Vitals & Historical Trends", expanded=False):
-                if latest:
-                    st.caption(f"Last updated: {latest['timestamp'].strftime('%Y-%m-%d %H:%M UTC')}")
-                    m1, m2, m3, m4 = st.columns(4)
-                    m1.metric("Weight", f"{latest.get('weight_kg')} kg")
-                    m2.metric("BP", f"{latest.get('systolic_bp')}/{latest.get('diastolic_bp')}")
-                    m3.metric("Temp", f"{latest.get('temperature_f')} °F")
-                    m4.metric("Heart Rate", f"{latest.get('heart_rate')} BPM")
-                else:
-                    st.caption("No vital signs logged yet.")
+            # Sub-Accordion 2: Multi-Entry Vitals & Trend Charts
+            with st.expander("📊 2. Historical Vitals & Trend Analytics", expanded=False):
+                render_vitals_trends(p_name)
 
-            # Level 2 Sub-Accordion 3: Urinalysis, Lab Panel & Imaging Evaluation
+            # Sub-Accordion 3: Urinalysis, Lab Panel & Imaging Evaluation
             with st.expander("🔬 3. Urinalysis, Lab Panel & Imaging Reports", expanded=False):
                 render_diagnostics_viewer(p_name, allow_upload=True, actor_role="Doctor")
 
-            # Level 2 Sub-Accordion 4: Prescription Allergy & Interaction Clearance
+            # Sub-Accordion 4: Prescription Allergy & Interaction Clearance
             with st.expander("💊 4. Prescription Allergy & Drug Interaction Checker", expanded=False):
                 p_allergies = patient_doc.get("allergies", [])
                 st.write(f"**Documented Allergies:** `{', '.join(p_allergies) if p_allergies else 'None Recorded'}`")
@@ -608,7 +603,7 @@ elif active_role == "Doctor (Nephrologist)":
                 else:
                     st.success(f"✅ Prescribing clearance confirmed for {rx_med}.")
 
-            # Level 2 Sub-Accordion 5: Signed Consultation Notes
+            # Sub-Accordion 5: Signed Consultation Notes
             with st.expander("📝 5. Consultation Notes (Publish to Patient)", expanded=False):
                 with st.form(key=f"note_form_{p_name}"):
                     hist = st.text_area("Subjective History:", value="Patient reports feeling well. No fever.")
@@ -627,13 +622,14 @@ elif active_role == "Doctor (Nephrologist)":
                         }
                         notes_col.insert_one(note_doc)
                         log_audit_event("Doctor", "DOC-NEPH-01", "SIGN_NOTE", {"patient": p_name})
-                        st.success(f"Note signed and published to {p_name}'s portal!")
+                        st.success(f" ✅ Note successfully signed and published to {p_name}'s portal!")
                         st.rerun()
+
 # =========================================================
 # ROLE 4: TRANSPLANT COORDINATOR WORKFLOW
 # =========================================================
 elif active_role == "Transplant Coordinator":
-    # render_clinical_disclaimer()
+    render_clinical_disclaimer()
     st.header("📋 Interactive Coordinator Hub")
 
     with st.expander("➕ Register New Patient Profile", expanded=True):
@@ -659,7 +655,7 @@ elif active_role == "Transplant Coordinator":
                     )
                     if success:
                         log_audit_event("Coordinator", "COORD-01", "ONBOARD_PATIENT", {"patient": c_name, "organ": c_organ})
-                        st.success(msg)
+                        st.success(f" ✅ {msg}")
                         st.rerun()
                     else:
                         st.error(msg)
@@ -677,12 +673,16 @@ elif active_role == "Transplant Coordinator":
         intake_status = c1.selectbox("Operational Review State:", ["Pending Review", "In Progress", "Review Completed"])
         if c2.button("Update Intake Status"):
             patients_col.update_one({"patient_name": selected_p}, {"$set": {"intake_status": intake_status}}, upsert=True)
-            st.success("Status synced to database.")
+            log_audit_event("Coordinator", "COORD-01", "UPDATE_INTAKE_STATUS", {"patient": selected_p, "status": intake_status})
+            st.success(f" ✅ Intake status updated to '{intake_status}' for {selected_p}.")
 
-    with st.expander("🧪 2. Diagnostic Studies & Labs Overview", expanded=False):
+    with st.expander("📊 2. Patient Historical Vitals & Trend Analytics", expanded=False):
+        render_vitals_trends(selected_p)
+
+    with st.expander("🧪 3. Diagnostic Studies & Labs Overview", expanded=False):
         render_diagnostics_viewer(selected_p, allow_upload=True, actor_role="Coordinator")
 
-    with st.expander("💊 3. Interactive Medication Reconciliation Workspace", expanded=False):
+    with st.expander("💊 4. Interactive Medication Reconciliation Workspace", expanded=False):
         st.markdown("##### Reconcile EHR Orders vs. Patient Self-Reporting")
         meds = p_profile.get("current_medications", [])
         
@@ -695,12 +695,13 @@ elif active_role == "Transplant Coordinator":
                         {"patient_name": selected_p, "current_medications.drug": m.get('drug')},
                         {"$set": {"current_medications.$.status": "Reconciled"}}
                     )
-                    st.success(f"Reconciled {m.get('drug')}")
+                    log_audit_event("Coordinator", "COORD-01", "RECONCILE_MED", {"patient": selected_p, "drug": m.get('drug')})
+                    st.success(f" ✅ {m.get('drug')} successfully reconciled!")
                     st.rerun()
         else:
             st.caption("No medication records present for reconciliation.")
 
-    with st.expander("📅 4. Appointment Scheduling & Direct Messages", expanded=False):
+    with st.expander("📅 5. Appointment Scheduling & Direct Messages", expanded=False):
         app_date = st.date_input("Schedule Surveillance Appointment:")
         app_type = st.selectbox("Type:", ["Graft Ultrasound", "Routine Labs", "Biopsy"])
         
@@ -710,7 +711,8 @@ elif active_role == "Transplant Coordinator":
                 {"$push": {"appointments": {"date": str(app_date), "type": app_type}}},
                 upsert=True
             )
-            st.success("Appointment registered in Mongo.")
+            log_audit_event("Coordinator", "COORD-01", "SCHEDULE_APPOINTMENT", {"patient": selected_p, "type": app_type})
+            st.success(f" ✅ Appointment ({app_type}) scheduled for {app_date}!")
 
         st.divider()
         render_communication_hub(selected_p, "Transplant Coordinator")
@@ -747,17 +749,17 @@ elif active_role == "System Administrator":
                     }}
                 )
                 log_audit_event("Admin", "ADMIN-01", "UPDATE_RULES", {"ruleset": active_ruleset.get("ruleset_id")})
-                st.success("Rule engine updated! All clinical triage checks now use these new thresholds instantly.")
+                st.success(" ✅ Rule engine parameters updated in MongoDB! Triage calculations updated.")
                 st.rerun()
 
     with st.expander("👥 2. Registered Patient Directory", expanded=False):
         all_patients = list(patients_col.find({}, {"_id": 0}))
         if all_patients:
-            st.dataframe(pd.DataFrame(all_patients)[["patient_name", "patient_id", "organ_type", "transplant_date", "allergies"]])
+            st.dataframe(pd.DataFrame(all_patients)[["patient_name", "patient_id", "organ_type", "transplant_date", "allergies"]], use_container_width=True)
 
     with st.expander("🛡️ 3. Live System Audit Logs", expanded=False):
         logs = list(audit_col.find().sort("timestamp", -1))
         if logs:
-            st.dataframe(pd.DataFrame(logs)[["timestamp", "actor_role", "actor_id", "action", "details"]])
+            st.dataframe(pd.DataFrame(logs)[["timestamp", "actor_role", "actor_id", "action", "details"]], use_container_width=True)
         else:
             st.caption("No audit events logged.")
