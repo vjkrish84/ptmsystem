@@ -718,6 +718,73 @@ elif active_role == "Caregiver Proxy View":
     with st.expander("📊 Patient Vital Trends & Full Entry Log", expanded=False):
         render_vitals_trends(patient_name)
 
+    with st.expander("🧪 Custom Markers & Dynamic Parameters", expanded=False):
+        st.caption("Real-time telemetry for dynamic, schema-less parameters configured by the System Administrator.")
+        
+        patient_logs = list(vitals_col.find({"patient_name": patient_name}).sort("timestamp", 1))
+        custom_marker_names = set()
+        for log in patient_logs:
+            if "custom_fields" in log and isinstance(log["custom_fields"], dict):
+                custom_marker_names.update(log["custom_fields"].keys())
+                
+        if not custom_marker_names:
+            st.info("No custom parameters logged for this patient yet.")
+        else:
+            selected_marker = st.selectbox(
+                "Select Custom Marker to Inspect:",
+                options=sorted(list(custom_marker_names)),
+                key="caregiver_selected_custom_marker"
+            )
+            
+            marker_series = []
+            for log in patient_logs:
+                c_fields = log.get("custom_fields", {})
+                if selected_marker in c_fields:
+                    val = c_fields[selected_marker]
+                    try:
+                        num_val = float(val)
+                    except (ValueError, TypeError):
+                        num_val = None
+                        
+                    marker_series.append({
+                        "Timestamp": log.get("timestamp"),
+                        "Value": val,
+                        "NumericValue": num_val
+                    })
+                    
+            if marker_series:
+                df_marker = pd.DataFrame(marker_series)
+                numeric_df = df_marker.dropna(subset=["NumericValue"])
+                
+                m_col1, m_col2, m_col3 = st.columns(3)
+                latest_val = df_marker.iloc[-1]["Value"]
+                
+                with m_col1:
+                    st.metric(f"Latest {selected_marker}", str(latest_val))
+                if not numeric_df.empty:
+                    with m_col2:
+                        st.metric("Historical Min", f"{numeric_df['NumericValue'].min():.2f}")
+                    with m_col3:
+                        st.metric("Historical Max", f"{numeric_df['NumericValue'].max():.2f}")
+                else:
+                    with m_col2:
+                        st.metric("Total Entries", len(df_marker))
+                    with m_col3:
+                        st.metric("Data Type", "Text / Categorical")
+                        
+                st.divider()
+                if not numeric_df.empty and len(numeric_df) > 1:
+                    fig = px.line(
+                        numeric_df, x="Timestamp", y="NumericValue", markers=True,
+                        title=f"Trend: {selected_marker} over Time",
+                        labels={"NumericValue": selected_marker, "Timestamp": "Date / Time"}
+                    )
+                    fig.update_layout(template="plotly_white", height=300, margin=dict(l=20, r=20, t=40, b=20))
+                    st.plotly_chart(fig, use_container_width=True)
+                
+                st.markdown("##### Detailed Log History")
+                st.dataframe(df_marker[["Timestamp", "Value"]].sort_values(by="Timestamp", ascending=False), use_container_width=True, hide_index=True)
+
     with st.expander("🧪 Diagnostic Reports", expanded=False):
         render_diagnostics_viewer(patient_name, allow_upload=False, actor_role="Caregiver")
 
@@ -726,6 +793,7 @@ elif active_role == "Caregiver Proxy View":
 
     with st.expander("📋 Physician Consultation Notes", expanded=False):
         render_clinical_notes_viewer(patient_name)
+
 # =========================================================
 # ROLE 3: DOCTOR (NEPHROLOGIST) WORKSPACE
 # =========================================================
@@ -793,12 +861,7 @@ elif active_role == "Doctor (Nephrologist)":
             with st.expander("🧪 3. Custom Markers", expanded=False):
                 st.caption("Real-time telemetry for dynamic, schema-less parameters added via System Admin.")
                 
-                # Query patient vitals logs sorted by timestamp
-                patient_logs = list(
-                    vitals_col.find({"patient_name": p_name}).sort("timestamp", 1)
-                )
-                
-                # Extract all custom fields present across this patient's history
+                patient_logs = list(vitals_col.find({"patient_name": p_name}).sort("timestamp", 1))
                 custom_marker_names = set()
                 for log in patient_logs:
                     if "custom_fields" in log and isinstance(log["custom_fields"], dict):
@@ -807,20 +870,17 @@ elif active_role == "Doctor (Nephrologist)":
                 if not custom_marker_names:
                     st.info("No custom parameters or dynamic markers logged for this patient yet.")
                 else:
-                    # 1. Parameter Selection Bar
                     selected_marker = st.selectbox(
                         "Select Custom Marker to Inspect:",
                         options=sorted(list(custom_marker_names)),
-                        key="doc_selected_custom_marker"
+                        key=f"doc_selected_custom_marker_{p_name}"
                     )
                     
-                    # 2. Extract series data for selected marker
                     marker_series = []
                     for log in patient_logs:
                         c_fields = log.get("custom_fields", {})
                         if selected_marker in c_fields:
                             val = c_fields[selected_marker]
-                            # Convert numeric values for analysis
                             try:
                                 num_val = float(val)
                             except (ValueError, TypeError):
@@ -838,7 +898,6 @@ elif active_role == "Doctor (Nephrologist)":
                         df_marker = pd.DataFrame(marker_series)
                         numeric_df = df_marker.dropna(subset=["NumericValue"])
                         
-                        # 3. KPI Summary Metrics
                         m_col1, m_col2, m_col3 = st.columns(3)
                         latest_val = df_marker.iloc[-1]["Value"]
                         
@@ -858,31 +917,20 @@ elif active_role == "Doctor (Nephrologist)":
                                 
                         st.divider()
                         
-                        # 4. Interactive Trend Chart (for numeric values) or Log Table
                         if not numeric_df.empty and len(numeric_df) > 1:
                             fig = px.line(
-                                numeric_df,
-                                x="Timestamp",
-                                y="NumericValue",
-                                markers=True,
+                                numeric_df, x="Timestamp", y="NumericValue", markers=True,
                                 title=f"Trend: {selected_marker} over Time",
                                 labels={"NumericValue": selected_marker, "Timestamp": "Date / Time"}
                             )
-                            fig.update_layout(
-                                template="plotly_white",
-                                height=300,
-                                margin=dict(l=20, r=20, t=40, b=20)
-                            )
+                            fig.update_layout(template="plotly_white", height=300, margin=dict(l=20, r=20, t=40, b=20))
                             st.plotly_chart(fig, use_container_width=True)
                         
-                        # 5. Full Audit Log Table for this specific marker
                         st.markdown("##### Detailed Log History")
                         st.dataframe(
                             df_marker[["Timestamp", "Value"]].sort_values(by="Timestamp", ascending=False),
-                            use_container_width=True,
-                            hide_index=True
+                            use_container_width=True, hide_index=True
                         )
-    
 
             with st.expander("🔬 4. Urinalysis, Lab Panel & Imaging Reports", expanded=False):
                 render_diagnostics_viewer(p_name, allow_upload=True, actor_role="Doctor")
@@ -928,7 +976,6 @@ elif active_role == "Doctor (Nephrologist)":
                         })
                         st.success(f" ✅ Consultation note signed, published to {p_name}'s portal, and logged in Audit Trail!")
                         st.rerun()
-
 # =========================================================
 # ROLE 4: TRANSPLANT COORDINATOR WORKFLOW
 # =========================================================
@@ -983,10 +1030,77 @@ elif active_role == "Transplant Coordinator":
     with st.expander("📊 2. Patient Historical Vitals & Trend Analytics", expanded=False):
         render_vitals_trends(selected_p)
 
-    with st.expander("🧪 3. Diagnostic Studies & Labs Overview", expanded=False):
+    with st.expander("🧪 3. Custom Markers & Dynamic Parameters", expanded=False):
+        st.caption("Real-time telemetry for dynamic, schema-less parameters configured by the System Administrator.")
+        
+        patient_logs = list(vitals_col.find({"patient_name": selected_p}).sort("timestamp", 1))
+        custom_marker_names = set()
+        for log in patient_logs:
+            if "custom_fields" in log and isinstance(log["custom_fields"], dict):
+                custom_marker_names.update(log["custom_fields"].keys())
+                
+        if not custom_marker_names:
+            st.info("No custom parameters logged for this patient yet.")
+        else:
+            selected_marker = st.selectbox(
+                "Select Custom Marker to Inspect:",
+                options=sorted(list(custom_marker_names)),
+                key=f"coord_selected_custom_marker_{selected_p}"
+            )
+            
+            marker_series = []
+            for log in patient_logs:
+                c_fields = log.get("custom_fields", {})
+                if selected_marker in c_fields:
+                    val = c_fields[selected_marker]
+                    try:
+                        num_val = float(val)
+                    except (ValueError, TypeError):
+                        num_val = None
+                        
+                    marker_series.append({
+                        "Timestamp": log.get("timestamp"),
+                        "Value": val,
+                        "NumericValue": num_val
+                    })
+                    
+            if marker_series:
+                df_marker = pd.DataFrame(marker_series)
+                numeric_df = df_marker.dropna(subset=["NumericValue"])
+                
+                m_col1, m_col2, m_col3 = st.columns(3)
+                latest_val = df_marker.iloc[-1]["Value"]
+                
+                with m_col1:
+                    st.metric(f"Latest {selected_marker}", str(latest_val))
+                if not numeric_df.empty:
+                    with m_col2:
+                        st.metric("Historical Min", f"{numeric_df['NumericValue'].min():.2f}")
+                    with m_col3:
+                        st.metric("Historical Max", f"{numeric_df['NumericValue'].max():.2f}")
+                else:
+                    with m_col2:
+                        st.metric("Total Entries", len(df_marker))
+                    with m_col3:
+                        st.metric("Data Type", "Text / Categorical")
+                        
+                st.divider()
+                if not numeric_df.empty and len(numeric_df) > 1:
+                    fig = px.line(
+                        numeric_df, x="Timestamp", y="NumericValue", markers=True,
+                        title=f"Trend: {selected_marker} over Time",
+                        labels={"NumericValue": selected_marker, "Timestamp": "Date / Time"}
+                    )
+                    fig.update_layout(template="plotly_white", height=300, margin=dict(l=20, r=20, t=40, b=20))
+                    st.plotly_chart(fig, use_container_width=True)
+                
+                st.markdown("##### Detailed Log History")
+                st.dataframe(df_marker[["Timestamp", "Value"]].sort_values(by="Timestamp", ascending=False), use_container_width=True, hide_index=True)
+
+    with st.expander("🔬 4. Diagnostic Studies & Labs Overview", expanded=False):
         render_diagnostics_viewer(selected_p, allow_upload=True, actor_role="Coordinator")
 
-    with st.expander("💊 4. Interactive Medication Reconciliation Workspace", expanded=False):
+    with st.expander("💊 5. Interactive Medication Reconciliation Workspace", expanded=False):
         st.markdown("##### Reconcile EHR Orders vs. Patient Self-Reporting")
         meds = p_profile.get("current_medications", [])
         
@@ -1005,7 +1119,7 @@ elif active_role == "Transplant Coordinator":
         else:
             st.caption("No medication records present for reconciliation.")
 
-    with st.expander("📅 5. Appointment Scheduling & Direct Messages", expanded=False):
+    with st.expander("📅 6. Appointment Scheduling & Direct Messages", expanded=False):
         app_date = st.date_input("Schedule Surveillance Appointment:")
         app_type = st.selectbox("Type:", ["Graft Ultrasound", "Routine Labs", "Biopsy"])
         
