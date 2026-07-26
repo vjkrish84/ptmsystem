@@ -1071,46 +1071,84 @@ elif active_role == "System Administrator":
                     st.error(f"❌ Failed to update rules: {e}")
 
     # ---------------------------------------------------------
-    # 2. Dynamic Custom Parameters Configurator
+    # 2. Dynamic Custom Parameters Configurator & Directory
     # ---------------------------------------------------------
-    with st.expander("🛠️ 2. Custom Parameter(s) Configurator", expanded=False):
-        st.caption("Add new parameters to the patient intake forms in real time.")
+    with st.expander("🛠️ 2. Custom Parameter(s) Configurator & Directory", expanded=False):
+        st.caption("Manage existing dynamic parameters or add new ones to patient intake forms in real time.")
         
-        col1, col2, col3 = st.columns([2, 2, 1])
-        with col1:
-            new_field_name = st.text_input("Parameter Name (e.g. Tacrolimus Trough)")
-        with col2:
-            new_field_type = st.selectbox("Data Type", ["Number", "Text", "Select"])
-        with col3:
-            new_field_unit = st.text_input("Unit (e.g. ng/mL)")
-
-        if st.button("➕ Add Parameter to Patient Form", type="primary"):
-            if new_field_name.strip():
-                try:
-                    db["schema_config"].update_one(
-                        {"field_name": new_field_name.strip(), "entity": "patient_input"},
-                        {"$set": {
-                            "field_name": new_field_name.strip(),
-                            "field_type": new_field_type,
-                            "unit": new_field_unit.strip(),
-                            "entity": "patient_input"
-                        }},
-                        upsert=True
-                    )
+        tab_list, tab_add = st.tabs(["📋 Existing Parameters", "➕ Add New Parameter"])
+        
+        # TAB 1: VIEW & MANAGE EXISTING DYNAMIC PARAMETERS
+        with tab_list:
+            existing_params = list(db["schema_config"].find({"entity": "patient_input"}))
+            
+            if not existing_params:
+                st.info("No custom dynamic parameters defined yet.")
+            else:
+                st.markdown("##### Currently Active Custom Parameters")
+                
+                # Display table of active parameters
+                df_params = pd.DataFrame(existing_params)
+                target_param_cols = ["field_name", "field_type", "unit"]
+                df_params_safe = df_params.reindex(columns=target_param_cols)
+                df_params_safe.columns = ["Parameter Name", "Data Type", "Unit"]
+                st.dataframe(df_params_safe, use_container_width=True, hide_index=True)
+                
+                st.divider()
+                st.markdown("##### 🗑️ Remove Parameter")
+                col_del_select, col_del_btn = st.columns([3, 1])
+                
+                param_names = [p["field_name"] for p in existing_params]
+                to_delete = col_del_select.selectbox("Select Parameter to Remove:", options=param_names, key="del_param_select")
+                
+                if col_del_btn.button("Delete Parameter", type="secondary"):
+                    db["schema_config"].delete_one({"field_name": to_delete, "entity": "patient_input"})
                     
-                    # Log audit trail for custom parameter modification
-                    log_audit_event("Admin", "ADMIN-01", "CREATE_CUSTOM_MARKER", {
-                        "field_name": new_field_name.strip(),
-                        "field_type": new_field_type,
-                        "unit": new_field_unit.strip()
+                    log_audit_event("Admin", "ADMIN-01", "DELETE_CUSTOM_MARKER", {
+                        "field_name": to_delete
                     })
                     
-                    st.toast(f"✅ Marker '{new_field_name}' added!", icon="🧪")
-                    st.success(f"✅ Added parameter '{new_field_name}' dynamically and committed to Audit Trail!")
-                except Exception as e:
-                    st.error(f"❌ Database write error: {e}")
-            else:
-                st.warning("⚠️ Please provide a valid parameter name before saving.")
+                    st.toast(f"🗑️ Parameter '{to_delete}' removed!", icon="⚠️")
+                    st.success(f"Successfully deleted '{to_delete}' from patient intake forms.")
+                    st.rerun()
+
+        # TAB 2: ADD NEW DYNAMIC PARAMETER
+        with tab_add:
+            col1, col2, col3 = st.columns([2, 2, 1])
+            with col1:
+                new_field_name = st.text_input("Parameter Name (e.g. Tacrolimus Trough)")
+            with col2:
+                new_field_type = st.selectbox("Data Type", ["Number", "Text", "Select"])
+            with col3:
+                new_field_unit = st.text_input("Unit (e.g. ng/mL)")
+
+            if st.button("➕ Add Parameter to Patient Form", type="primary"):
+                if new_field_name.strip():
+                    try:
+                        db["schema_config"].update_one(
+                            {"field_name": new_field_name.strip(), "entity": "patient_input"},
+                            {"$set": {
+                                "field_name": new_field_name.strip(),
+                                "field_type": new_field_type,
+                                "unit": new_field_unit.strip(),
+                                "entity": "patient_input"
+                            }},
+                            upsert=True
+                        )
+                        
+                        log_audit_event("Admin", "ADMIN-01", "CREATE_CUSTOM_MARKER", {
+                            "field_name": new_field_name.strip(),
+                            "field_type": new_field_type,
+                            "unit": new_field_unit.strip()
+                        })
+                        
+                        st.toast(f"✅ Marker '{new_field_name}' added!", icon="🧪")
+                        st.success(f"✅ Added parameter '{new_field_name}' dynamically and committed to Audit Trail!")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"❌ Database write error: {e}")
+                else:
+                    st.warning("⚠️ Please provide a valid parameter name before saving.")
 
     # ---------------------------------------------------------
     # 3. Registered Patient Directory
@@ -1146,4 +1184,6 @@ elif active_role == "System Administrator":
             df_audit_safe = df_logs.reindex(columns=target_audit_cols)
             st.dataframe(df_audit_safe, use_container_width=True)
         else:
-            st.caption("No audit events logged yet.")    
+            st.caption("No audit events logged yet.")
+
+    
