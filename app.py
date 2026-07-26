@@ -8,7 +8,7 @@ from pymongo import MongoClient, errors
 from datetime import datetime, date, timezone
 
 # ---------------------------------------------------------
-# 1. Page Config & Custom Styling (Mobile & Typography)
+# 1. Page Config & Custom Styling (Mobile & Responsive)
 # ---------------------------------------------------------
 st.set_page_config(
     page_title="Enterprise Post-Transplant Portal",
@@ -245,7 +245,7 @@ def evaluate_clinical_triage(latest_doc, prev_doc=None):
     return "GREEN", red_flags, amber_flags, explanations
 
 def render_vitals_trends(patient_name: str):
-    """Generates interactive trends and full historical logs."""
+    """Generates interactive trends and full historical logs safely."""
     logs = list(vitals_col.find({"patient_name": patient_name}).sort("timestamp", 1))
     
     if not logs:
@@ -259,8 +259,8 @@ def render_vitals_trends(patient_name: str):
 
     with col_t1:
         fig1 = go.Figure()
-        fig1.add_trace(go.Scatter(x=df["Formatted_Time"], y=df["weight_kg"], mode="lines+markers", name="Weight (kg)", line=dict(color="#1f77b4", width=3)))
-        fig1.add_trace(go.Scatter(x=df["Formatted_Time"], y=df["temperature_f"], mode="lines+markers", name="Temp (°F)", yaxis="y2", line=dict(color="#ff7f0e", width=2, dash="dash")))
+        fig1.add_trace(go.Scatter(x=df["Formatted_Time"], y=df.get("weight_kg", []), mode="lines+markers", name="Weight (kg)", line=dict(color="#1f77b4", width=3)))
+        fig1.add_trace(go.Scatter(x=df["Formatted_Time"], y=df.get("temperature_f", []), mode="lines+markers", name="Temp (°F)", yaxis="y2", line=dict(color="#ff7f0e", width=2, dash="dash")))
         
         fig1.update_layout(
             title=f"📈 Weight & Temp History ({len(df)} Entries)",
@@ -274,8 +274,8 @@ def render_vitals_trends(patient_name: str):
 
     with col_t2:
         fig2 = go.Figure()
-        fig2.add_trace(go.Scatter(x=df["Formatted_Time"], y=df["tacrolimus"], mode="lines+markers", name="Tacrolimus (ng/mL)", line=dict(color="#2ca02c", width=3)))
-        fig2.add_trace(go.Scatter(x=df["Formatted_Time"], y=df["creatinine"], mode="lines+markers", name="Creatinine (mg/dL)", yaxis="y2", line=dict(color="#d62728", width=3)))
+        fig2.add_trace(go.Scatter(x=df["Formatted_Time"], y=df.get("tacrolimus", []), mode="lines+markers", name="Tacrolimus (ng/mL)", line=dict(color="#2ca02c", width=3)))
+        fig2.add_trace(go.Scatter(x=df["Formatted_Time"], y=df.get("creatinine", []), mode="lines+markers", name="Creatinine (mg/dL)", yaxis="y2", line=dict(color="#d62728", width=3)))
         
         fig2.update_layout(
             title="🧪 Tacrolimus & Creatinine Labs",
@@ -288,7 +288,10 @@ def render_vitals_trends(patient_name: str):
         st.plotly_chart(fig2, use_container_width=True)
 
     st.markdown("##### 📜 Chronological Entry Logs")
-    display_df = df[["timestamp", "weight_kg", "systolic_bp", "diastolic_bp", "temperature_f", "heart_rate", "tacrolimus", "creatinine", "symptoms"]].copy()
+    
+    # Safe column reindexing to prevent KeyErrors
+    target_cols = ["timestamp", "weight_kg", "systolic_bp", "diastolic_bp", "temperature_f", "heart_rate", "tacrolimus", "creatinine", "symptoms"]
+    display_df = df.reindex(columns=target_cols).copy()
     display_df["timestamp"] = display_df["timestamp"].dt.strftime("%Y-%m-%d %H:%M UTC")
     display_df.columns = ["Timestamp", "Weight (kg)", "Sys BP", "Dia BP", "Temp (°F)", "Heart Rate", "Tacrolimus", "Creatinine", "Reported Symptoms"]
     st.dataframe(display_df, use_container_width=True)
@@ -471,7 +474,7 @@ if active_role == "Patient Portal":
                 else:
                     st.warning("Please enter a valid patient name.")
 
-    with st.expander("📝 1. Daily Vitals Check-In & Red-Flags", expanded=True):
+    with st.expander("📝 1. Daily Vitals Check-In & Red-Flags", expanded=False):
         with st.form("patient_vitals_submission"):
             c1, c2, c3 = st.columns(3)
             weight = c1.number_input("Weight (kg)", value=68.5, step=0.1)
@@ -510,7 +513,7 @@ if active_role == "Patient Portal":
                 st.success(f"✅ Vitals logged in MongoDB and Audit Trail for {selected_patient}!")
                 st.rerun()
 
-    with st.expander("📊 2. Historical Vitals Log & Multi-Entry Trend Charts", expanded=True):
+    with st.expander("📊 2. Historical Vitals Log & Multi-Entry Trend Charts", expanded=False):
         render_vitals_trends(selected_patient)
 
     with st.expander("🧪 3. Upload & View Diagnostic Reports (Labs / Urinalysis / Imaging)", expanded=False):
@@ -528,7 +531,7 @@ elif active_role == "Caregiver Proxy View":
 
     patient_name = st.selectbox("Select Patient Profile:", options=all_registered_patients)
 
-    with st.expander("📊 Patient Vital Trends & Full Entry Log", expanded=True):
+    with st.expander("📊 Patient Vital Trends & Full Entry Log", expanded=False):
         render_vitals_trends(patient_name)
 
     with st.expander("🧪 Diagnostic Reports", expanded=False):
@@ -569,7 +572,7 @@ elif active_role == "Doctor (Nephrologist)":
 
         accordion_title = f"{status_badge} | {p_name} ({patient_doc.get('organ_type', 'Organ Transplant')}){summary_flags}"
 
-        # Level 1 Accordion: Main Patient Card
+        # Level 1 Accordion: Main Patient Card (Closed by default)
         with st.expander(accordion_title, expanded=False):
             
             if status_code == "RED":
@@ -659,7 +662,7 @@ elif active_role == "Transplant Coordinator":
     render_clinical_disclaimer()
     st.header("📋 Interactive Coordinator Hub")
 
-    with st.expander("➕ Register New Patient Profile", expanded=True):
+    with st.expander("➕ Register New Patient Profile", expanded=False):
         st.markdown("##### Clinical Intake Onboarding")
         with st.form("coord_new_patient"):
             c_name = st.text_input("Patient Full Name:")
@@ -750,7 +753,7 @@ elif active_role == "Transplant Coordinator":
 elif active_role == "System Administrator":
     st.header("⚙️ Dynamic System Governance & Rules Engine")
 
-    with st.expander("📜 1. Live Rules Engine Configuration (RS-DEMO)", expanded=True):
+    with st.expander("📜 1. Live Rules Engine Configuration (RS-DEMO)", expanded=False):
         st.markdown("##### Update Active Rule Thresholds in MongoDB")
         active_ruleset = rules_col.find_one({"active": True}) or {}
         params = active_ruleset.get("parameters", {})
@@ -790,12 +793,21 @@ elif active_role == "System Administrator":
     with st.expander("👥 2. Registered Patient Directory", expanded=False):
         all_patients = list(patients_col.find({}, {"_id": 0}))
         if all_patients:
-            st.dataframe(pd.DataFrame(all_patients)[["patient_name", "patient_id", "organ_type", "transplant_date", "allergies"]], use_container_width=True)
+            df_patients = pd.DataFrame(all_patients)
+            target_cols = ["patient_name", "patient_id", "organ_type", "transplant_date", "allergies"]
+            # Reindex prevents KeyError if any patient is missing a field in MongoDB
+            df_safe = df_patients.reindex(columns=target_cols)
+            st.dataframe(df_safe, use_container_width=True)
+        else:
+            st.caption("No patient profiles registered.")
 
-    with st.expander("🛡️ 3. Live System Audit Logs", expanded=True):
+    with st.expander("🛡️ 3. Live System Audit Logs", expanded=False):
         st.markdown("##### 🔍 Global Immutable Audit Trail")
         logs = list(audit_col.find().sort("timestamp", -1))
         if logs:
-            st.dataframe(pd.DataFrame(logs)[["timestamp", "actor_role", "actor_id", "action", "details"]], use_container_width=True)
+            df_logs = pd.DataFrame(logs)
+            target_audit_cols = ["timestamp", "actor_role", "actor_id", "action", "details"]
+            df_audit_safe = df_logs.reindex(columns=target_audit_cols)
+            st.dataframe(df_audit_safe, use_container_width=True)
         else:
             st.caption("No audit events logged yet.")
