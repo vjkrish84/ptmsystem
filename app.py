@@ -18,7 +18,7 @@ st.set_page_config(
 )
 
 def inject_custom_design():
-    """Injects responsive CSS for mobile viewports, unconstraining scroll height on nested expanders."""
+    """Injects responsive CSS for mobile viewports, FAB floating menu, and unconstraining scroll height on nested expanders."""
     st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap');
@@ -40,6 +40,7 @@ def inject_custom_design():
         overflow: visible !important;
     }
 
+    /* Floating Action Button (FAB) & Bottom Sheet for Mobile Navigation */
     @media (max-width: 768px) {
         [data-testid="column"] {
             width: 100% !important;
@@ -52,6 +53,39 @@ def inject_custom_design():
             background-color: #f8f9fa;
             border-radius: 8px;
             border: 1px solid #e9ecef;
+        }
+
+        /* Target the floating nav container */
+        .mobile-fab-container {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            z-index: 999999;
+        }
+
+        .mobile-fab-container [data-testid="stPopover"] > button {
+            border-radius: 50px !important;
+            width: 60px !important;
+            height: 60px !important;
+            background-color: #0066cc !important;
+            color: white !important;
+            box-shadow: 0px 4px 12px rgba(0,0,0,0.3) !important;
+            border: none !important;
+            font-size: 24px !important;
+            display: flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+        }
+        
+        .mobile-fab-container [data-testid="stPopover"] > button:hover {
+            background-color: #004999 !important;
+        }
+    }
+
+    /* Hide FAB on desktop screens */
+    @media (min-width: 769px) {
+        .mobile-fab-container {
+            display: none !important;
         }
     }
 
@@ -419,26 +453,60 @@ def render_diagnostics_viewer(patient_name: str, allow_upload: bool = False, act
                     st.write(f"**Notes:** {r.get('notes')}")
 
 # ---------------------------------------------------------
-# 5. Sidebar Navigation
+# 5. Sidebar Navigation & Mobile FAB Implementation
 # ---------------------------------------------------------
+# Session state initialization for selected role
+if "active_role" not in st.session_state:
+    st.session_state.active_role = "Patient Portal"
+
+role_options = [
+    "Patient Portal",
+    "Caregiver Proxy View",
+    "Doctor (Nephrologist)",
+    "Transplant Coordinator",
+    "System Administrator"
+]
+
 st.sidebar.title("🩺 Portal Navigation")
 
-active_role = st.sidebar.radio(
+# Update active role via Sidebar Radio
+selected_sidebar_role = st.sidebar.radio(
     "Select Operating Role:",
-    [
-        "Patient Portal",
-        "Caregiver Proxy View",
-        "Doctor (Nephrologist)",
-        "Transplant Coordinator",
-        "System Administrator"
-    ]
+    role_options,
+    index=role_options.index(st.session_state.active_role)
 )
+
+if selected_sidebar_role != st.session_state.active_role:
+    st.session_state.active_role = selected_sidebar_role
+    st.rerun()
 
 st.sidebar.divider()
 active_rule_doc = rules_col.find_one({"active": True}) or {}
 st.sidebar.caption(f"Active Rule Version: **{active_rule_doc.get('ruleset_id', 'N/A')}**")
 
 all_registered_patients = sorted(patients_col.distinct("patient_name")) or ["Sarah Connor"]
+
+# ---------------------------------------------------------
+# 6. Mobile FAB / Bottom Sheet Navigation Menu
+# ---------------------------------------------------------
+st.markdown('<div class="mobile-fab-container">', unsafe_allow_html=True)
+with st.popover("⚙️", help="Mobile Navigation Menu"):
+    st.markdown("### 📱 Navigation Sheet")
+    st.caption("Quickly switch operating role or view status")
+    
+    fab_role = st.radio(
+        "Switch View Role:",
+        role_options,
+        index=role_options.index(st.session_state.active_role),
+        key="fab_role_selector"
+    )
+    
+    if fab_role != st.session_state.active_role:
+        st.session_state.active_role = fab_role
+        st.rerun()
+st.markdown('</div>', unsafe_allow_html=True)
+
+active_role = st.session_state.active_role
 
 # =========================================================
 # ROLE 1: PATIENT PORTAL
