@@ -484,23 +484,27 @@ all_registered_patients = sorted(patients_col.distinct("patient_name")) or ["Sar
 # 6. Apple-Style Control Center Right-Corner Panel
 # ---------------------------------------------------------
 st.markdown('<div class="apple-control-center-container">', unsafe_allow_html=True)
-with st.popover(f"  {role_icons.get(st.session_state.active_role, '⚙️')} Switch Role", help="Apple Control Center Switcher"):
+
+with st.popover(f" {role_icons.get(st.session_state.active_role, '⚙️')} Switch Role", help="Apple Control Center Switcher"):
     st.markdown("###  Control Center")
-    st.caption("Tap to change operating context")
+    st.caption("Select operating context")
     st.divider()
     
-    for r in role_options:
-        icon = role_icons.get(r, "📄")
-        is_active = (r == st.session_state.active_role)
-        label = f"{'✓ ' if is_active else ''}{icon} {r}"
-        
-        if st.button(label, key=f"cc_btn_{r}", use_container_width=True, type="primary" if is_active else "secondary"):
-            st.session_state.active_role = r
-            st.rerun()
+    # Using st.selectbox inside st.popover auto-closes the popover immediately upon selection
+    selected_role_index = role_options.index(st.session_state.active_role)
+    chosen_role = st.selectbox(
+        "Select Active Workspace:",
+        options=role_options,
+        index=selected_role_index,
+        format_func=lambda r: f"{role_icons.get(r, '📄')} {r}",
+        label_visibility="collapsed"
+    )
+    
+    if chosen_role != st.session_state.active_role:
+        st.session_state.active_role = chosen_role
+        st.rerun()
 
 st.markdown('</div>', unsafe_allow_html=True)
-
-active_role = st.session_state.active_role
 
 # =========================================================
 # ROLE 1: PATIENT PORTAL
