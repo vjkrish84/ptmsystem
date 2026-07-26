@@ -517,9 +517,9 @@ elif active_role == "Doctor (Nephrologist)":
     render_clinical_disclaimer()
     st.header("👨‍⚕️ Nephrologist Consultation & Triage Queue")
     
-    st.caption("📱 Mobile-Optimized Triage Flight Board: Expand any patient accordion below to inspect records, evaluate lab studies, run drug interaction checks, or sign clinical notes.")
+    st.caption("📱 **Mobile-Optimized Patient Flight Board**: Expand any patient profile below, then open specific sub-sections as needed.")
 
-    # Fetch all registered patients
+    # Loop through all registered patients
     for p_name in all_registered_patients:
         patient_doc = patients_col.find_one({"patient_name": p_name}) or {}
         logs = list(vitals_col.find({"patient_name": p_name}).sort("timestamp", -1))
@@ -533,7 +533,7 @@ elif active_role == "Doctor (Nephrologist)":
         if latest.get("override_status"):
             status_code = latest.get("override_status")
 
-        # Map RGB Status to Visual Accordion Headers
+        # Map RGB Status to Header Badges
         if status_code == "RED":
             status_badge = "🔴 RED ALERT"
             summary_flags = f" — {', '.join(red_flags)}" if red_flags else " — Critical Review Required"
@@ -546,10 +546,10 @@ elif active_role == "Doctor (Nephrologist)":
 
         accordion_title = f"{status_badge} | {p_name} ({patient_doc.get('organ_type', 'Organ Transplant')}){summary_flags}"
 
-        # Render Top-Level Patient Accordion
-        with st.expander(accordion_title, expanded=(status_code == "RED")):
+        # Level 1 Accordion: Main Patient Card (Collapsed by default so page stays compact)
+        with st.expander(accordion_title, expanded=False):
             
-            # --- Inline Triage Ribbon ---
+            # Inline Status Banner
             if status_code == "RED":
                 st.markdown(f'<div class="ribbon-red">🔴 CRITICAL TRIAGE ALERT: {", ".join(red_flags) or "Requires Immediate Intervention"}</div>', unsafe_allow_html=True)
             elif status_code == "AMBER":
@@ -557,87 +557,78 @@ elif active_role == "Doctor (Nephrologist)":
             else:
                 st.markdown('<div class="ribbon-green">🟢 STABLE PATIENT STATUS: All vital signs within threshold bounds</div>', unsafe_allow_html=True)
 
-            # Sub-Tab 1: Rule Explanations & Manual Status Override
-            st.markdown("##### 🚨 Triage Logic Explanations & Manual Override")
-            if explanations:
-                for exp in explanations:
-                    st.caption(f"• {exp}")
-            else:
-                st.caption("• All logged parameters are currently within baseline thresholds.")
+            # Level 2 Sub-Accordion 1: Triage Rules & Manual Override
+            with st.expander("🚨 1. Triage Logic Explanations & Manual Status Override", expanded=False):
+                if explanations:
+                    for exp in explanations:
+                        st.caption(f"• {exp}")
+                else:
+                    st.caption("• All logged parameters are currently within baseline thresholds.")
 
-            ov_col1, ov_col2 = st.columns([2, 1])
-            override_val = ov_col1.selectbox("Manual Override Status:", ["GREEN", "AMBER", "RED"], key=f"ov_val_{p_name}")
-            override_reason = ov_col2.text_input("Override Reason:", key=f"ov_reason_{p_name}")
-            
-            if st.button("Commit Status Override", key=f"btn_ov_{p_name}"):
+                ov_col1, ov_col2 = st.columns([2, 1])
+                override_val = ov_col1.selectbox("Manual Override Status:", ["GREEN", "AMBER", "RED"], key=f"ov_val_{p_name}")
+                override_reason = ov_col2.text_input("Override Reason:", key=f"ov_reason_{p_name}")
+                
+                if st.button("Commit Status Override", key=f"btn_ov_{p_name}"):
+                    if latest:
+                        vitals_col.update_one({"_id": latest["_id"]}, {"$set": {"override_status": override_val, "override_reason": override_reason}})
+                        log_audit_event("Doctor", "DOC-NEPH-01", "OVERRIDE_TRIAGE", {"patient": p_name, "status": override_val})
+                        st.success(f"Status overridden to {override_val} for {p_name}.")
+                        st.rerun()
+
+            # Level 2 Sub-Accordion 2: Latest Vitals Quick Snapshot
+            with st.expander("📊 2. Latest Vitals & Historical Trends", expanded=False):
                 if latest:
-                    vitals_col.update_one({"_id": latest["_id"]}, {"$set": {"override_status": override_val, "override_reason": override_reason}})
-                    log_audit_event("Doctor", "DOC-NEPH-01", "OVERRIDE_TRIAGE", {"patient": p_name, "status": override_val})
-                    st.success(f"Status overridden to {override_val} for {p_name}.")
-                    st.rerun()
+                    st.caption(f"Last updated: {latest['timestamp'].strftime('%Y-%m-%d %H:%M UTC')}")
+                    m1, m2, m3, m4 = st.columns(4)
+                    m1.metric("Weight", f"{latest.get('weight_kg')} kg")
+                    m2.metric("BP", f"{latest.get('systolic_bp')}/{latest.get('diastolic_bp')}")
+                    m3.metric("Temp", f"{latest.get('temperature_f')} °F")
+                    m4.metric("Heart Rate", f"{latest.get('heart_rate')} BPM")
+                else:
+                    st.caption("No vital signs logged yet.")
 
-            st.divider()
+            # Level 2 Sub-Accordion 3: Urinalysis, Lab Panel & Imaging Evaluation
+            with st.expander("🔬 3. Urinalysis, Lab Panel & Imaging Reports", expanded=False):
+                render_diagnostics_viewer(p_name, allow_upload=True, actor_role="Doctor")
 
-            # Sub-Tab 2: Latest Vitals Quick Snapshot
-            st.markdown("##### 📊 Latest Vitals Snapshot")
-            if latest:
-                st.caption(f"Last updated: {latest['timestamp'].strftime('%Y-%m-%d %H:%M UTC')}")
-                m1, m2, m3, m4 = st.columns(4)
-                m1.metric("Weight", f"{latest.get('weight_kg')} kg")
-                m2.metric("BP", f"{latest.get('systolic_bp')}/{latest.get('diastolic_bp')}")
-                m3.metric("Temp", f"{latest.get('temperature_f')} °F")
-                m4.metric("Heart Rate", f"{latest.get('heart_rate')} BPM")
-            else:
-                st.caption("No vital signs logged yet.")
+            # Level 2 Sub-Accordion 4: Prescription Allergy & Interaction Clearance
+            with st.expander("💊 4. Prescription Allergy & Drug Interaction Checker", expanded=False):
+                p_allergies = patient_doc.get("allergies", [])
+                st.write(f"**Documented Allergies:** `{', '.join(p_allergies) if p_allergies else 'None Recorded'}`")
 
-            st.divider()
+                rx_med = st.selectbox("Test Prescription Clearance:", ["Tacrolimus", "Mycophenolate Mofetil", "Ibuprofen (NSAID)", "Erythromycin", "Penicillin"], key=f"rx_{p_name}")
 
-            # Sub-Tab 3: Urinalysis, Lab Panel & Imaging Evaluation
-            st.markdown("##### 🔬 Urinalysis, Lab Panel & Imaging Evaluation")
-            render_diagnostics_viewer(p_name, allow_upload=True, actor_role="Doctor")
+                if rx_med == "Ibuprofen (NSAID)" and "NSAIDs" in p_allergies:
+                    st.error(f"🚨 CONTRAINDICATION: {p_name} has a documented allergy to NSAIDs! High risk of graft nephrotoxicity.")
+                elif rx_med == "Penicillin" and "Penicillin" in p_allergies:
+                    st.error(f"🚨 ALLERGY ALERT: {p_name} has a documented allergy to Penicillin!")
+                elif rx_med == "Erythromycin":
+                    st.warning("⚠️ INTERACTION WARNING: Erythromycin inhibits CYP3A4, markedly increasing Tacrolimus troughs.")
+                else:
+                    st.success(f"✅ Prescribing clearance confirmed for {rx_med}.")
 
-            st.divider()
+            # Level 2 Sub-Accordion 5: Signed Consultation Notes
+            with st.expander("📝 5. Consultation Notes (Publish to Patient)", expanded=False):
+                with st.form(key=f"note_form_{p_name}"):
+                    hist = st.text_area("Subjective History:", value="Patient reports feeling well. No fever.")
+                    exam = st.text_area("Objective Examination:", value="Graft non-tender. BP well-controlled.")
+                    disp = st.selectbox("Disposition:", ["Maintain Current Protocol", "Adjust Immunosuppression Dose", "Schedule Outpatient Scan"])
 
-            # Sub-Tab 4: Patient-Aware Drug Allergy & Interaction Checker
-            st.markdown("##### 💊 Prescription Allergy & Drug Interaction Clearance")
-            p_allergies = patient_doc.get("allergies", [])
-            st.write(f"**Documented Allergies:** `{', '.join(p_allergies) if p_allergies else 'None Recorded'}`")
-
-            rx_med = st.selectbox("Test Prescription Clearance:", ["Tacrolimus", "Mycophenolate Mofetil", "Ibuprofen (NSAID)", "Erythromycin", "Penicillin"], key=f"rx_{p_name}")
-
-            if rx_med == "Ibuprofen (NSAID)" and "NSAIDs" in p_allergies:
-                st.error(f"🚨 CONTRAINDICATION: {p_name} has a documented allergy to NSAIDs! High risk of graft nephrotoxicity.")
-            elif rx_med == "Penicillin" and "Penicillin" in p_allergies:
-                st.error(f"🚨 ALLERGY ALERT: {p_name} has a documented allergy to Penicillin!")
-            elif rx_med == "Erythromycin":
-                st.warning("⚠️ INTERACTION WARNING: Erythromycin inhibits CYP3A4, markedly increasing Tacrolimus troughs.")
-            else:
-                st.success(f"✅ Prescribing clearance confirmed for {rx_med}.")
-
-            st.divider()
-
-            # Sub-Tab 5: Signed Consultation Notes (Auto-Published to Patient)
-            st.markdown("##### 📝 Signed Consultation Notes (Auto-Published to Patient Portal)")
-            with st.form(key=f"note_form_{p_name}"):
-                hist = st.text_area("Subjective History:", value="Patient reports feeling well. No fever.")
-                exam = st.text_area("Objective Examination:", value="Graft non-tender. BP well-controlled.")
-                disp = st.selectbox("Disposition:", ["Maintain Current Protocol", "Adjust Immunosuppression Dose", "Schedule Outpatient Scan"])
-
-                if st.form_submit_button("✍️ Sign Note & Auto-Publish"):
-                    note_doc = {
-                        "patient_name": p_name,
-                        "doctor_id": "DOC-NEPH-01",
-                        "doctor_name": "Dr. Sarah Jenkins",
-                        "history": hist,
-                        "examination": exam,
-                        "disposition": disp,
-                        "timestamp": datetime.now(timezone.utc)
-                    }
-                    notes_col.insert_one(note_doc)
-                    log_audit_event("Doctor", "DOC-NEPH-01", "SIGN_NOTE", {"patient": p_name})
-                    st.success(f"Note signed and published to {p_name}'s portal!")
-                    st.rerun()
-
+                    if st.form_submit_button("✍️ Sign Note & Auto-Publish"):
+                        note_doc = {
+                            "patient_name": p_name,
+                            "doctor_id": "DOC-NEPH-01",
+                            "doctor_name": "Dr. Sarah Jenkins",
+                            "history": hist,
+                            "examination": exam,
+                            "disposition": disp,
+                            "timestamp": datetime.now(timezone.utc)
+                        }
+                        notes_col.insert_one(note_doc)
+                        log_audit_event("Doctor", "DOC-NEPH-01", "SIGN_NOTE", {"patient": p_name})
+                        st.success(f"Note signed and published to {p_name}'s portal!")
+                        st.rerun()
 # =========================================================
 # ROLE 4: TRANSPLANT COORDINATOR WORKFLOW
 # =========================================================
