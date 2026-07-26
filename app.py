@@ -103,6 +103,7 @@ notes_col = db["clinical_notes"]
 audit_col = db["audit_logs"]
 rules_col = db["ruleset_versions"]
 patients_col = db["patient_profiles"]
+diagnostics_col = db["diagnostic_reports"]  # Labs, Urinalysis, Imaging Reports
 
 # Ensure Active Rule Set Document Exists
 if rules_col.count_documents({}) == 0:
@@ -120,11 +121,13 @@ if rules_col.count_documents({}) == 0:
         }
     })
 
-# Ensure Demo Patient Exists
+# Ensure Seed Patient Exists
 if patients_col.count_documents({"patient_name": "Sarah Connor"}) == 0:
     patients_col.insert_one({
         "patient_name": "Sarah Connor",
         "patient_id": "PT-1001",
+        "organ_type": "Kidney",
+        "transplant_date": "2026-01-15",
         "allergies": ["NSAIDs", "Penicillin"],
         "current_medications": [
             {"drug": "Tacrolimus", "dose": "3mg BID", "status": "Matched"},
@@ -137,11 +140,12 @@ if patients_col.count_documents({"patient_name": "Sarah Connor"}) == 0:
 # 3. Helpers & Clinical Engine
 # ---------------------------------------------------------
 def render_clinical_disclaimer():
+    """Renders prominent clinical decision-support advisory."""
     st.warning(
         "⚠️ **CLINICAL DECISION-SUPPORT DISCLAIMER:** "
-        "This software is an auxiliary clinical decision-support tool. "
-        "It does not replace professional clinical evaluation. "
-        "All automated triage scoring and interaction warnings must be verified by a licensed clinician.",
+        "This system is an auxiliary clinical decision-support tool. "
+        "It does not replace independent clinical evaluation, direct patient examination, or professional medical judgment. "
+        "All automated triage scoring, lab/imaging reports, and interaction warnings must be verified by a licensed clinician prior to clinical intervention.",
         icon="🩺"
     )
 
@@ -153,6 +157,39 @@ def log_audit_event(actor_role: str, actor_id: str, action: str, details: dict):
         "action": action,
         "details": details
     })
+
+def create_new_patient_profile(name, p_id, organ, tx_date, allergies_list, initial_meds):
+    """Utility to register new patients safely into MongoDB."""
+    if patients_col.find_one({"patient_name": name}):
+        return False, "Patient profile already exists with this name."
+    
+    new_doc = {
+        "patient_name": name,
+        "patient_id": p_id or f"PT-{abs(hash(name)) % 10000}",
+        "organ_type": organ,
+        "transplant_date": str(tx_date),
+        "allergies": [a.strip() for a in allergies_list if a.strip()],
+        "current_medications": initial_meds or [],
+        "appointments": [],
+        "created_at": datetime.now(timezone.utc)
+    }
+    patients_col.insert_one(new_doc)
+    
+    # Create baseline vital log
+    vitals_col.insert_one({
+        "patient_id": new_doc["patient_id"],
+        "patient_name": name,
+        "timestamp": datetime.now(timezone.utc),
+        "weight_kg": 70.0,
+        "temperature_f": 98.6,
+        "heart_rate": 72,
+        "systolic_bp": 120,
+        "diastolic_bp": 80,
+        "symptoms": [],
+        "creatinine": 1.0,
+        "tacrolimus": 6.0
+    })
+    return True, "Patient profile successfully created!"
 
 def evaluate_clinical_triage(latest_doc, prev_doc=None):
     """Evaluates triage status dynamically using the active Mongo rule set."""
@@ -204,7 +241,7 @@ def render_communication_hub(patient_name: str, active_role: str):
     messages = list(notifs_col.find({"patient_name": patient_name}).sort("timestamp", -1))
     
     if not messages:
-        st.info("No active thread for this profile.")
+        st.info("No active message history for this profile.")
     else:
         for msg in messages:
             urgency = msg.get("urgency", "Routine")
@@ -235,7 +272,78 @@ def render_communication_hub(patient_name: str, active_role: str):
                 st.rerun()
 
 # ---------------------------------------------------------
-# 5. Sidebar Navigation
+# 5. Shared Diagnostic Reports Component (Labs, UA, Imaging)
+# ---------------------------------------------------------
+def render_diagnostics_viewer(patient_name: str, allow_upload: bool = False, actor_role: str = "Patient"):
+    st.markdown(f"#### 🔬 Diagnostic Reports & Imaging Directory: **{patient_name}**")
+
+    if allow_upload:
+        st.subheader("📤 Upload Diagnostic Study / Lab Entry")
+        with st.form(key=f"upload_diag_form_{patient_name}_{actor_role}"):
+            d_category = st.selectbox("Report Category:", ["Urinalysis (UA)", "Comprehensive Lab Panel", "Ultrasound / Imaging Report"])
+            d_file = st.file_uploader("Attach Report File (PDF/PNG/JPG):", type=["pdf", "png", "jpg"])
+            d_notes = st.text_area("Clinical Notes / Finding Summary:")
+            
+            # Interactive fields depending on study category
+            col_a, col_b = st.columns(2)
+            c_val1 = col_a.number_input("Serum Creatinine (mg/dL) [Lab]", value=1.2, step=0.1)
+            c_val2 = col_b.number_input("Tacrolimus Level (ng/mL) [Lab]", value=7.5, step=0.1)
+            
+            ua_protein = st.selectbox("Protein [Urinalysis]:", ["Negative", "Trace", "+1 (30 mg/dL)", "+2 (100 mg/dL)", "+3 (300 mg/dL)"])
+            ua_wbc = st.selectbox("WBC Esterase [Urinalysis]:", ["Negative", "Trace", "Positive"])
+            
+            img_impression = st.text_input("Radiology Impression [Imaging]:", value="Normal vascular resistive indices in allografts. No hydronephrosis.")
+
+            if st.form_submit_button("Upload & Parse Diagnostic Report"):
+                report_doc = {
+                    "patient_name": patient_name,
+                    "category": d_category,
+                    "uploaded_by": actor_role,
+                    "notes": d_notes,
+                    "creatinine": c_val1,
+                    "tacrolimus": c_val2,
+                    "urinalysis": {"protein": ua_protein, "wbc_esterase": ua_wbc},
+                    "imaging_impression": img_impression,
+                    "file_name": d_file.name if d_file else "Manual_Entry.pdf",
+                    "timestamp": datetime.now(timezone.utc)
+                }
+                diagnostics_col.insert_one(report_doc)
+                
+                # Update latest vitals log with new lab values
+                vitals_col.update_one(
+                    {"patient_name": patient_name},
+                    {"$set": {"creatinine": c_val1, "tacrolimus": c_val2}},
+                    upsert=True
+                )
+                log_audit_event(actor_role, "USER-LOCAL", "UPLOAD_DIAGNOSTIC", {"patient": patient_name, "category": d_category})
+                st.success("Diagnostic report uploaded and synced to profile.")
+                st.rerun()
+
+    st.divider()
+    st.markdown("##### 📁 Historical Reports in MongoDB")
+    reports = list(diagnostics_col.find({"patient_name": patient_name}).sort("timestamp", -1))
+    
+    if not reports:
+        st.info("No historical lab, urinalysis, or imaging reports found for this patient.")
+    else:
+        for r in reports:
+            cat_icon = "🧪" if "Lab" in r['category'] else ("🔬" if "Urinalysis" in r['category'] else "📸")
+            with st.expander(f"{cat_icon} {r['category']} — {r['timestamp'].strftime('%b %d, %Y %H:%M UTC')}", expanded=False):
+                st.caption(f"Uploaded by: **{r.get('uploaded_by', 'System')}** | File: `{r.get('file_name', 'N/A')}`")
+                
+                if "Urinalysis" in r['category']:
+                    u = r.get("urinalysis", {})
+                    st.write(f"• **Urinalysis Protein:** `{u.get('protein', 'N/A')}` | **WBC Esterase:** `{u.get('wbc_esterase', 'N/A')}`")
+                elif "Imaging" in r['category']:
+                    st.write(f"• **Radiology Impression:** `{r.get('imaging_impression', 'N/A')}`")
+                else:
+                    st.write(f"• **Serum Creatinine:** `{r.get('creatinine')} mg/dL` | **Tacrolimus Level:** `{r.get('tacrolimus')} ng/mL`")
+                
+                if r.get("notes"):
+                    st.write(f"**Notes:** {r.get('notes')}")
+
+# ---------------------------------------------------------
+# 6. Sidebar Navigation
 # ---------------------------------------------------------
 st.sidebar.title("🩺 Portal Navigation")
 
@@ -254,17 +362,42 @@ st.sidebar.divider()
 active_rule_doc = rules_col.find_one({"active": True}) or {}
 st.sidebar.caption(f"Active Rule Version: **{active_rule_doc.get('ruleset_id', 'N/A')}**")
 
+all_registered_patients = sorted(patients_col.distinct("patient_name")) or ["Sarah Connor"]
+
 # =========================================================
 # ROLE 1: PATIENT PORTAL
 # =========================================================
 if active_role == "Patient Portal":
     st.header("📱 Patient Self-Monitoring Portal")
 
-    existing_patients = sorted(vitals_col.distinct("patient_name")) or ["Sarah Connor"]
-    selected_patient = st.selectbox("Active Patient Profile:", options=existing_patients)
+    selected_patient = st.selectbox("Active Patient Profile:", options=all_registered_patients)
     p_profile = patients_col.find_one({"patient_name": selected_patient}) or {}
 
-    # Single-Open Accordions for Mobile Usability
+    with st.expander("👤 Register New Patient Profile", expanded=False):
+        st.markdown("##### Self-Registration / Onboarding")
+        with st.form("new_patient_self_reg"):
+            np_name = st.text_input("Full Patient Name:")
+            np_id = st.text_input("Patient Medical Record ID (Optional):")
+            np_organ = st.selectbox("Transplant Organ Type:", ["Kidney", "Liver", "Heart", "Lung", "Pancreas"])
+            np_tx_date = st.date_input("Transplant Date:", value=date.today())
+            np_allergies = st.text_input("Known Allergies (comma separated):", value="NSAIDs")
+            
+            if st.form_submit_button("Register Patient Profile"):
+                if np_name.strip():
+                    allergies_list = [a.strip() for a in np_allergies.split(",")]
+                    success, msg = create_new_patient_profile(
+                        np_name.strip(), np_id.strip(), np_organ, np_tx_date, allergies_list,
+                        [{"drug": "Tacrolimus", "dose": "2mg BID", "status": "Matched"}]
+                    )
+                    if success:
+                        log_audit_event("Patient", np_name, "PATIENT_REGISTERED", {"organ": np_organ})
+                        st.success(msg)
+                        st.rerun()
+                    else:
+                        st.error(msg)
+                else:
+                    st.warning("Please enter a valid patient name.")
+
     with st.expander("📝 1. Daily Vitals Check-In & Red-Flags", expanded=True):
         with st.form("patient_vitals_submission"):
             c1, c2, c3 = st.columns(3)
@@ -276,7 +409,7 @@ if active_role == "Patient Portal":
             sbp = c4.number_input("Systolic BP", value=120)
             dbp = c5.number_input("Diastolic BP", value=80)
 
-            symptoms = st.multiselect("Report Symptoms:", [
+            symptoms = st.multiselect("Report Active Symptoms:", [
                 "Low urine output", "Graft site pain", "Swelling in feet/hands",
                 "Shortness of breath", "Incision drainage", "Nausea/Vomiting"
             ])
@@ -300,8 +433,10 @@ if active_role == "Patient Portal":
                 st.success("Vitals successfully saved to MongoDB!")
                 st.rerun()
 
-    with st.expander("📊 2. My Logged Records & Signed Doctor Notes", expanded=False):
-        st.markdown("##### Real-Time Dynamic History")
+    with st.expander("🧪 2. Upload & View Diagnostic Reports (Labs / Urinalysis / Imaging)", expanded=False):
+        render_diagnostics_viewer(selected_patient, allow_upload=True, actor_role="Patient")
+
+    with st.expander("📊 3. My Logged Records & Signed Doctor Notes", expanded=False):
         p_logs = list(vitals_col.find({"patient_name": selected_patient}).sort("timestamp", -1))
         
         if p_logs:
@@ -325,27 +460,17 @@ if active_role == "Patient Portal":
         else:
             st.caption("No published clinical notes available.")
 
-    with st.expander("💬 3. Care Team Communication Hub", expanded=False):
+    with st.expander("💬 4. Care Team Communication Hub", expanded=False):
         render_communication_hub(selected_patient, "Patient Portal")
-
-    with st.expander("👥 4. Caregiver Proxy Access & Export", expanded=False):
-        st.text_input("Delegated Caregiver Email:", value="john.connor@example.com")
-        st.checkbox("Allow caregiver to view vital logs", value=True)
-        st.button("Save Permissions")
-        
-        st.divider()
-        if p_logs:
-            df_export = pd.DataFrame(p_logs)
-            st.download_button("📥 Export Health History (CSV)", df_export.to_csv(index=False), file_name=f"{selected_patient}_vitals.csv")
 
 # =========================================================
 # ROLE 2: CAREGIVER PROXY VIEW
 # =========================================================
 elif active_role == "Caregiver Proxy View":
     st.header("👥 Caregiver Proxy View")
-    st.info("🔒 Scoped Viewing Mode: Scoped strictly by patient authorization.")
+    st.info("🔒 Scoped Viewing Mode: Access restricted to authorized patient profiles.")
 
-    patient_name = st.selectbox("Select Patient Profile:", ["Sarah Connor"])
+    patient_name = st.selectbox("Select Patient Profile:", options=all_registered_patients)
     p_logs = list(vitals_col.find({"patient_name": patient_name}).sort("timestamp", -1))
 
     with st.expander("📊 Patient Vital Trends", expanded=True):
@@ -356,7 +481,10 @@ elif active_role == "Caregiver Proxy View":
             c2.metric("BP", f"{latest.get('systolic_bp')}/{latest.get('diastolic_bp')}")
             c3.metric("Temp", f"{latest.get('temperature_f')} °F")
         else:
-            st.caption("No records available.")
+            st.caption("No records available for this patient.")
+
+    with st.expander("🧪 Diagnostic Reports", expanded=False):
+        render_diagnostics_viewer(patient_name, allow_upload=False, actor_role="Caregiver")
 
     with st.expander("💬 Care Team Messaging", expanded=False):
         render_communication_hub(patient_name, "Caregiver Proxy View")
@@ -368,19 +496,17 @@ elif active_role == "Doctor (Nephrologist)":
     render_clinical_disclaimer()
     st.header("👨‍⚕️ Nephrologist Consultation & Triage Workspace")
 
-    patient_names = sorted(vitals_col.distinct("patient_name")) or ["Sarah Connor"]
-    selected_p = st.selectbox("Select Active Patient Workspace:", options=patient_names)
+    selected_p = st.selectbox("Select Active Patient Workspace:", options=all_registered_patients)
     
-    # Query MongoDB for target patient records
     patient_doc = patients_col.find_one({"patient_name": selected_p}) or {}
     logs = list(vitals_col.find({"patient_name": selected_p}).sort("timestamp", -1))
     latest = logs[0] if logs else {}
     prev = logs[1] if len(logs) > 1 else None
 
-    # Evaluate dynamic rules against active MongoDB profile
+    # Dynamic Triage Evaluation
     status_code, red_flags, amber_flags, explanations = evaluate_clinical_triage(latest, prev)
 
-    # Status Ribbons
+    # Color-coded Triage Ribbons
     if status_code == "RED":
         st.markdown(f'<div class="ribbon-red">🔴 CRITICAL TRIAGE ALERT: {", ".join(red_flags) or "Immediate Review Required"}</div>', unsafe_allow_html=True)
     elif status_code == "AMBER":
@@ -390,8 +516,11 @@ elif active_role == "Doctor (Nephrologist)":
 
     with st.expander("🚨 1. Dynamic Clinical Queue & Deterministic Overrides", expanded=True):
         st.markdown("##### Dynamic Rule Explanations:")
-        for exp in explanations:
-            st.caption(f"• {exp}")
+        if explanations:
+            for exp in explanations:
+                st.caption(f"• {exp}")
+        else:
+            st.caption("• All logged parameters are currently within normal baseline bounds.")
 
         st.divider()
         st.markdown("##### Manual Override:")
@@ -406,21 +535,25 @@ elif active_role == "Doctor (Nephrologist)":
                 st.success("Override written to database.")
                 st.rerun()
 
-    with st.expander("💊 2. Patient-Aware Drug Allergy & Interaction Checker", expanded=False):
-        p_allergies = patient_doc.get("allergies", ["NSAIDs"])
-        st.write(f"**Documented Allergies for {selected_p}:** `{', '.join(p_allergies)}`")
+    with st.expander("🔬 2. Urinalysis, Lab Panel & Imaging Evaluation", expanded=False):
+        render_diagnostics_viewer(selected_p, allow_upload=True, actor_role="Doctor")
 
-        rx_med = st.selectbox("Test Prescription Clearance:", ["Tacrolimus", "Mycophenolate Mofetil", "Ibuprofen (NSAID)", "Erythromycin"])
+    with st.expander("💊 3. Patient-Aware Drug Allergy & Interaction Checker", expanded=False):
+        p_allergies = patient_doc.get("allergies", [])
+        st.write(f"**Documented Allergies for {selected_p}:** `{', '.join(p_allergies) if p_allergies else 'None Recorded'}`")
 
-        # Dynamic Check against patient profile
+        rx_med = st.selectbox("Test Prescription Clearance:", ["Tacrolimus", "Mycophenolate Mofetil", "Ibuprofen (NSAID)", "Erythromycin", "Penicillin"])
+
         if rx_med == "Ibuprofen (NSAID)" and "NSAIDs" in p_allergies:
             st.error(f"🚨 CONTRAINDICATION: {selected_p} has a documented allergy to NSAIDs! High risk of graft nephrotoxicity.")
+        elif rx_med == "Penicillin" and "Penicillin" in p_allergies:
+            st.error(f"🚨 ALLERGY ALERT: {selected_p} has a documented allergy to Penicillin!")
         elif rx_med == "Erythromycin":
             st.warning("⚠️ INTERACTION WARNING: Erythromycin inhibits CYP3A4, markedly increasing Tacrolimus troughs.")
         else:
             st.success(f"✅ Prescribing clearance confirmed for {rx_med}.")
 
-    with st.expander("📝 3. Signed Consultation Notes (Auto-Published to Patient)", expanded=False):
+    with st.expander("📝 4. Signed Consultation Notes (Auto-Published to Patient)", expanded=False):
         hist = st.text_area("Subjective History:", value="Patient reports feeling well. No fever.")
         exam = st.text_area("Objective Examination:", value="Graft non-tender. BP well-controlled.")
         disp = st.selectbox("Disposition:", ["Maintain Current Protocol", "Adjust Immunosuppression Dose", "Schedule Outpatient Scan"])
@@ -446,35 +579,71 @@ elif active_role == "Transplant Coordinator":
     render_clinical_disclaimer()
     st.header("📋 Interactive Coordinator Hub")
 
-    patient_names = sorted(vitals_col.distinct("patient_name")) or ["Sarah Connor"]
-    selected_p = st.selectbox("Select Target Patient:", options=patient_names)
+    with st.expander("➕ Register New Patient Profile", expanded=True):
+        st.markdown("##### Clinical Intake Onboarding")
+        with st.form("coord_new_patient"):
+            c_name = st.text_input("Patient Full Name:")
+            c_id = st.text_input("MRN / Patient ID:")
+            c_organ = st.selectbox("Organ Type:", ["Kidney", "Liver", "Heart", "Lung", "Pancreas"])
+            c_tx_date = st.date_input("Transplant Date:", value=date.today())
+            c_allergies = st.text_input("Documented Allergies (comma separated):", value="NSAIDs, Penicillin")
+            c_tac = st.text_input("Tacrolimus Initial Dose:", value="3mg BID")
+            c_pred = st.text_input("Prednisone Initial Dose:", value="5mg Daily")
+
+            if st.form_submit_button("Create Patient Record in Database"):
+                if c_name.strip():
+                    meds_list = [
+                        {"drug": "Tacrolimus", "dose": c_tac, "status": "Matched"},
+                        {"drug": "Prednisone", "dose": c_pred, "status": "Matched"}
+                    ]
+                    allergies_list = [a.strip() for a in c_allergies.split(",")]
+                    success, msg = create_new_patient_profile(
+                        c_name.strip(), c_id.strip(), c_organ, c_tx_date, allergies_list, meds_list
+                    )
+                    if success:
+                        log_audit_event("Coordinator", "COORD-01", "ONBOARD_PATIENT", {"patient": c_name, "organ": c_organ})
+                        st.success(msg)
+                        st.rerun()
+                    else:
+                        st.error(msg)
+                else:
+                    st.warning("Please provide a valid patient name.")
+
+    selected_p = st.selectbox("Select Target Patient Profile:", options=all_registered_patients)
     p_profile = patients_col.find_one({"patient_name": selected_p}) or {}
 
-    with st.expander("📥 1. Interactive Intake Queue & Review Actions", expanded=True):
+    with st.expander("📥 1. Interactive Intake Queue & Review Actions", expanded=False):
         st.markdown(f"##### Active Intake Status for **{selected_p}**")
+        st.write(f"• **Organ:** `{p_profile.get('organ_type', 'N/A')}` | **Transplant Date:** `{p_profile.get('transplant_date', 'N/A')}`")
+        
         c1, c2 = st.columns(2)
         intake_status = c1.selectbox("Operational Review State:", ["Pending Review", "In Progress", "Review Completed"])
         if c2.button("Update Intake Status"):
             patients_col.update_one({"patient_name": selected_p}, {"$set": {"intake_status": intake_status}}, upsert=True)
             st.success("Status synced to database.")
 
-    with st.expander("💊 2. Interactive Medication Reconciliation Workspace", expanded=False):
+    with st.expander("🧪 2. Diagnostic Studies & Labs Overview", expanded=False):
+        render_diagnostics_viewer(selected_p, allow_upload=True, actor_role="Coordinator")
+
+    with st.expander("💊 3. Interactive Medication Reconciliation Workspace", expanded=False):
         st.markdown("##### Reconcile EHR Orders vs. Patient Self-Reporting")
         meds = p_profile.get("current_medications", [])
         
         if meds:
             for i, m in enumerate(meds):
                 col_m1, col_m2 = st.columns([3, 1])
-                col_m1.write(f"• **{m.get('drug')}**: EHR Order = `{m.get('dose', 'N/A')}`")
-                if col_m2.button("Mark Reconciled", key=f"reconcile_{i}"):
+                col_m1.write(f"• **{m.get('drug')}**: Prescribed Dose = `{m.get('dose', m.get('EHR_dose', 'N/A'))}` | Status = `{m.get('status', 'Pending')}`")
+                if col_m2.button("Mark Reconciled", key=f"reconcile_{selected_p}_{i}"):
                     patients_col.update_one(
                         {"patient_name": selected_p, "current_medications.drug": m.get('drug')},
                         {"$set": {"current_medications.$.status": "Reconciled"}}
                     )
                     st.success(f"Reconciled {m.get('drug')}")
                     st.rerun()
+        else:
+            st.caption("No medication records present for reconciliation.")
 
-    with st.expander("📅 3. Appointment Scheduling & Direct Messages", expanded=False):
+    with st.expander("📅 4. Appointment Scheduling & Direct Messages", expanded=False):
         app_date = st.date_input("Schedule Surveillance Appointment:")
         app_type = st.selectbox("Type:", ["Graft Ultrasound", "Routine Labs", "Biopsy"])
         
@@ -524,7 +693,12 @@ elif active_role == "System Administrator":
                 st.success("Rule engine updated! All clinical triage checks now use these new thresholds instantly.")
                 st.rerun()
 
-    with st.expander("🛡️ 2. Live System Audit Logs", expanded=False):
+    with st.expander("👥 2. Registered Patient Directory", expanded=False):
+        all_patients = list(patients_col.find({}, {"_id": 0}))
+        if all_patients:
+            st.dataframe(pd.DataFrame(all_patients)[["patient_name", "patient_id", "organ_type", "transplant_date", "allergies"]])
+
+    with st.expander("🛡️ 3. Live System Audit Logs", expanded=False):
         logs = list(audit_col.find().sort("timestamp", -1))
         if logs:
             st.dataframe(pd.DataFrame(logs)[["timestamp", "actor_role", "actor_id", "action", "details"]])
