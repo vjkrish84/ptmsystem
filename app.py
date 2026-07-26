@@ -14,7 +14,7 @@ st.set_page_config(
     page_title="Enterprise Post-Transplant Portal",
     page_icon="🩺",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="collapsed"
 )
 
 def inject_custom_design():
@@ -25,6 +25,11 @@ def inject_custom_design():
     
     html, body, [class*="css"] {
         font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Inter', sans-serif;
+    }
+
+    /* Completely hide Streamlit sidebar if present */
+    [data-testid="stSidebar"] {
+        display: none !important;
     }
 
     /* Prevent mobile scroll trapping inside Streamlit expanders */
@@ -49,10 +54,10 @@ def inject_custom_design():
     }
 
     .apple-control-center-container [data-testid="stPopover"] > button {
-        background: rgba(255, 255, 255, 0.75) !important;
+        background: rgba(255, 255, 255, 0.85) !important;
         backdrop-filter: blur(16px) saturate(180%) !important;
         -webkit-backdrop-filter: blur(16px) saturate(180%) !important;
-        border: 1px solid rgba(209, 213, 219, 0.4) !important;
+        border: 1px solid rgba(209, 213, 219, 0.5) !important;
         border-radius: 20px !important;
         padding: 6px 16px !important;
         box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.12) !important;
@@ -63,7 +68,7 @@ def inject_custom_design():
     }
 
     .apple-control-center-container [data-testid="stPopover"] > button:hover {
-        background: rgba(255, 255, 255, 0.9) !important;
+        background: rgba(255, 255, 255, 0.95) !important;
         box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.2) !important;
         transform: scale(1.02);
     }
@@ -452,7 +457,7 @@ def render_diagnostics_viewer(patient_name: str, allow_upload: bool = False, act
                     st.write(f"**Notes:** {r.get('notes')}")
 
 # ---------------------------------------------------------
-# 5. State Initialization & Navigation
+# 5. State Initialization & Role Declarations
 # ---------------------------------------------------------
 if "active_role" not in st.session_state:
     st.session_state.active_role = "Patient Portal"
@@ -472,23 +477,6 @@ role_icons = {
     "Transplant Coordinator": "📋",
     "System Administrator": "⚙️"
 }
-
-# Sidebar Navigation (Standard Desktop Support)
-st.sidebar.title("🩺 Portal Navigation")
-
-selected_sidebar_role = st.sidebar.radio(
-    "Select Operating Role:",
-    role_options,
-    index=role_options.index(st.session_state.active_role)
-)
-
-if selected_sidebar_role != st.session_state.active_role:
-    st.session_state.active_role = selected_sidebar_role
-    st.rerun()
-
-st.sidebar.divider()
-active_rule_doc = rules_col.find_one({"active": True}) or {}
-st.sidebar.caption(f"Active Rule Version: **{active_rule_doc.get('ruleset_id', 'N/A')}**")
 
 all_registered_patients = sorted(patients_col.distinct("patient_name")) or ["Sarah Connor"]
 
