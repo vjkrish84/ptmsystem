@@ -73,6 +73,46 @@ def inject_custom_design():
         transform: scale(1.02);
     }
 
+    /* --- Apple Glassmorphism Control Center Theme --- */
+    div[data-testid="stPopoverBody"] {
+        background: rgba(255, 255, 255, 0.75) !important;
+        backdrop-filter: blur(20px) saturate(180%) !important;
+        -webkit-backdrop-filter: blur(20px) saturate(180%) !important;
+        border-radius: 20px !important;
+        border: 1px solid rgba(255, 255, 255, 0.4) !important;
+        box-shadow: 0 20px 40px rgba(0, 0, 0, 0.12) !important;
+        padding: 18px !important;
+    }
+    
+    /* Style active vs inactive role buttons inside Control Center */
+    div[data-testid="stPopoverBody"] button {
+        border-radius: 12px !important;
+        border: none !important;
+        font-weight: 500 !important;
+        transition: all 0.2s ease-in-out !important;
+        text-align: left !important;
+        justify-content: flex-start !important;
+        padding: 10px 16px !important;
+    }
+    
+    /* Inactive button style (Subtle iOS tile) */
+    div[data-testid="stPopoverBody"] button[kind="secondary"] {
+        background-color: rgba(240, 240, 245, 0.6) !important;
+        color: #1c1c1e !important;
+    }
+    
+    div[data-testid="stPopoverBody"] button[kind="secondary"]:hover {
+        background-color: rgba(225, 225, 235, 0.8) !important;
+        transform: translateY(-1px);
+    }
+    
+    /* Active button style (iOS Accent Blue / Dark Slate instead of harsh Red) */
+    div[data-testid="stPopoverBody"] button[kind="primary"] {
+        background: #007aff !important; /* Authentic Apple Blue */
+        color: #ffffff !important;
+        box-shadow: 0 4px 12px rgba(0, 122, 255, 0.3) !important;
+    }
+
     @media (max-width: 768px) {
         .apple-control-center-container {
             top: auto;
@@ -518,19 +558,24 @@ def switch_role_and_close(new_role):
 # ---------------------------------------------------------
 st.markdown('<div class="apple-control-center-container">', unsafe_allow_html=True)
 
+# Using standard emojis to ensure cross-platform rendering
+active_icon = role_icons.get(st.session_state.active_role, "⚙️")
+
 with st.popover(
-    f"  {role_icons.get(st.session_state.active_role, '⚙️')} Switch Role",
-    help="Apple Control Center Switcher",
+    f"{active_icon}  Switch Role",
+    help="Control Center Role Switcher",
     key="control_center_open",
     on_change="rerun"
 ):
-    st.markdown("###  Control Center")
+    st.markdown("#### Control Center")
     st.caption("Select operating context")
-    st.divider()
+    st.markdown("---")
     
     for r in role_options:
         icon = role_icons.get(r, "📄")
         is_active = (r == st.session_state.active_role)
+        
+        # Clean label without weird box artifacts
         label = f"{'✓ ' if is_active else '  '}{icon} {r}"
         
         st.button(
@@ -544,7 +589,7 @@ with st.popover(
 
 st.markdown('</div>', unsafe_allow_html=True)
 
-# Assign active_role globally after state & popover processing
+# Assign active_role variable for downstream conditional blocks
 active_role = st.session_state.active_role
 # =========================================================
 # ROLE 1: PATIENT PORTAL
