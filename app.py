@@ -4,11 +4,11 @@ import base64
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
-from pymongo import MongoClient
+from pymongo import MongoClient, errors
 from datetime import datetime, date
 
 # ---------------------------------------------------------
-# 1. Compact, Responsive Page Config & Custom CSS
+# 1. Page Configuration
 # ---------------------------------------------------------
 st.set_page_config(
     page_title="Post-Transplant Portal",
@@ -17,75 +17,36 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-st.markdown("""
-    <style>
-    /* Compact Main Container */
-    .stMainBlockContainer, .block-container {
-        padding-top: 2rem !important;
-        padding-bottom: 2rem !important;
-        max-width: 1000px;
-        margin: 0 auto;
-    }
-    
-    /* Reduced Mobile & Web Typography */
-    html, body, p, label, .stMarkdown, div {
-        font-size: 0.92rem !important;
-    }
-    h1 { font-size: 1.6rem !important; margin-bottom: 0.5rem !important; }
-    h2 { font-size: 1.3rem !important; }
-    h3 { font-size: 1.1rem !important; }
-    h4, h5 { font-size: 1.0rem !important; font-weight: 600 !important; }
-
-    /* Compact Buttons & Input Heights */
-    .stButton>button {
-        width: 100%;
-        min-height: 2.6rem !important;
-        font-size: 0.95rem !important;
-        font-weight: 600;
-        border-radius: 6px;
-    }
-    .stNumberInput input, .stTextInput input, .stSelectbox div {
-        font-size: 0.9rem !important;
-    }
-
-    /* Scaling Down Streamlit Metrics for Small Screens */
-    [data-testid="stMetricValue"] {
-        font-size: 1.25rem !important;
-    }
-    [data-testid="stMetricLabel"] {
-        font-size: 0.8rem !important;
-    }
-
-    /* Chat Styling */
-    .chat-doc {
-        background-color: #eef6ff;
-        border-left: 3px solid #0066cc;
-        padding: 8px 12px;
-        border-radius: 6px;
-        margin-bottom: 6px;
-        font-size: 0.88rem;
-    }
-    .chat-patient {
-        background-color: #f4f4f4;
-        border-left: 3px solid #28a745;
-        padding: 8px 12px;
-        border-radius: 6px;
-        margin-bottom: 6px;
-        font-size: 0.88rem;
-    }
-    </style>
-""", unsafe_allow_html=True)
-
 # ---------------------------------------------------------
-# 2. Database Connection
+# 2. Resilient Database Connection
 # ---------------------------------------------------------
 @st.cache_resource
 def init_connection():
-    mongo_uri = os.getenv("MONGO_URI")
+    """Initializes and checks MongoDB Connection pool with secrets fallback."""
+    mongo_uri = None
+    
+    # Try loading from streamlit secrets, then environment variable
+    if "MONGO_URI" in st.secrets:
+        mongo_uri = st.secrets["MONGO_URI"]
+    else:
+        mongo_uri = os.getenv("MONGO_URI")
+        
     if not mongo_uri:
-        st.error("⚠️ MONGO_URI missing in Streamlit Secrets.")
+        st.error("⚠️ Database connection string missing! Set `MONGO_URI` in secrets or env.")
         st.stop()
-    return MongoClient(mongo_uri, tlsCAFile=certifi.where())
+        
+    try:
+        client = MongoClient(
+            mongo_uri, 
+            tlsCAFile=certifi.where(),
+            serverSelectionTimeoutMS=5000
+        )
+        # Verify connection status
+        client.admin.command('ping')
+        return client
+    except errors.PyMongoError as e:
+        st.error(f"⚠️ Failed to connect to Database: {e}")
+        st.stop()
 
 client = init_connection()
 db = client["transplant_portal"]
@@ -93,13 +54,15 @@ vitals_col = db["vitals_logs"]
 notifs_col = db["patient_notifications"]
 
 # ---------------------------------------------------------
-# 3. Core Clinical Alert Evaluation
+# 3. Core Clinical Alert Evaluation Rules
 # ---------------------------------------------------------
 def evaluate_clinical_alerts(latest_doc, prev_doc=None):
     red_flags, amber_flags = [], []
 
     tx_date = latest_doc.get("transplant_date", datetime.now())
     log_date = latest_doc.get("timestamp", datetime.now())
+    
+    # Standardize handling of date vs datetime types
     if isinstance(tx_date, date) and not isinstance(tx_date, datetime):
         tx_date = datetime.combine(tx_date, datetime.min.time())
     if isinstance(log_date, date) and not isinstance(log_date, datetime):
@@ -107,50 +70,50 @@ def evaluate_clinical_alerts(latest_doc, prev_doc=None):
 
     days_post_op = max((log_date - tx_date).days, 0)
 
-    # 1. Weight Spike Trigger (≥ 1.5kg in 24h)
+    # 1. Weight Gain Alert (≥ 1.5 kg in 24 hours)
     if prev_doc:
         wt_change = latest_doc.get('weight_kg', 0) - prev_doc.get('weight_kg', 0)
         if wt_change >= 1.5:
             red_flags.append(f"Weight Spike (+{wt_change:.1f} kg)")
 
-    # 2. Temp Alert
+    # 2. Temperature Trigger
     temp = latest_doc.get("temperature_f", 98.6)
     if temp >= 100.0:
         red_flags.append(f"Fever Alert ({temp:.1f}°F)")
 
-    # 3. BP Alert
+    # 3. Blood Pressure Trigger
     sbp, dbp = latest_doc.get("systolic_bp", 120), latest_doc.get("diastolic_bp", 80)
     if sbp > 150 or sbp < 100:
         amber_flags.append(f"Abnormal Systolic BP ({sbp} mmHg)")
     if dbp > 100 or dbp < 60:
         amber_flags.append(f"Abnormal Diastolic BP ({dbp} mmHg)")
 
-    # 4. HR Alert
+    # 4. Heart Rate Trigger
     hr = latest_doc.get("heart_rate", 72)
     if hr > 100 or hr < 55:
         amber_flags.append(f"Abnormal HR ({hr} BPM)")
 
-    # 5. Tacrolimus Alerts
+    # 5. Immunosuppressive Drug Monitoring (Tacrolimus Trough)
     tac = latest_doc.get("tacrolimus", 0.0)
     if tac > 0:
         if tac > 12.0:
-            red_flags.append(f"High Tacrolimus ({tac:.1f})")
+            red_flags.append(f"High Tacrolimus ({tac:.1f} ng/mL)")
         elif tac < 4.0:
-            red_flags.append(f"Low Tacrolimus ({tac:.1f})")
+            red_flags.append(f"Low Tacrolimus ({tac:.1f} ng/mL)")
 
-    # 6. Creatinine & Symptoms
+    # 6. Kidney Function & Symptom Severity
     creat = latest_doc.get("creatinine", 1.0)
     if creat >= 1.8:
-        red_flags.append(f"High Creatinine ({creat:.2f})")
+        red_flags.append(f"High Creatinine ({creat:.2f} mg/dL)")
 
     symptoms = latest_doc.get("symptoms", [])
     if symptoms:
-        red_flags.append(f"Symptoms Reported ({len(symptoms)})")
+        red_flags.append(f"Active Symptoms ({len(symptoms)})")
 
     return red_flags, amber_flags, days_post_op
 
 # ---------------------------------------------------------
-# 4. Navigation & Role Selection
+# 4. Navigation & Interface Selection
 # ---------------------------------------------------------
 st.title("🩺 Post-Transplant Portal")
 
@@ -186,8 +149,8 @@ if selected_role == "patient":
         • Seizures, sudden weakness, or slurred speech
         """)
 
-    # --- PATIENT PROFILE SELECTOR ---
-    existing_patients = vitals_col.distinct("patient_name")
+    # --- PATIENT PROFILE SELECTION ---
+    existing_patients = sorted(vitals_col.distinct("patient_name"))
     profile_options = ["➕ Create New Patient Profile"] + existing_patients if existing_patients else ["➕ Create New Patient Profile"]
     
     selected_option = st.selectbox(
@@ -217,16 +180,16 @@ if selected_role == "patient":
             
         is_new_patient = False
 
-    st.markdown("<br/>", unsafe_allow_html=True)
+    st.write("")
 
     tab_checkin, tab_care_team = st.tabs([
         "📝 Daily Check-In", 
-        "💬 Care Team & Safety Info"
+        "💬 Care Team Communications"
     ])
 
-    # --- TAB 1: DAILY CHECK-IN ---
+    # --- TAB 1: DAILY CHECK-IN FORM ---
     with tab_checkin:
-        with st.form("patient_checkin_form"):
+        with st.form("patient_checkin_form", clear_on_submit=False):
             st.markdown("#### Primary Daily Vitals")
             st.caption("💡 Tip: Draw blood labs before taking morning Tacrolimus dose.")
 
@@ -254,7 +217,7 @@ if selected_role == "patient":
                 dsa_status = st.selectbox("DSA Antibodies:", ["Negative", "Positive (Low MFI)", "Positive (High MFI)", "Pending"])
                 uploaded_lab_file = st.file_uploader("Upload Lab Report:", type=["pdf", "png", "jpg", "jpeg"], key="lab_u")
             
-            with st.expander("🖼️ Imaging & Diagnostic Scans (Optional)", expanded=False):
+            with st.expander("🖼️ Imaging & Diagnostics (Optional)", expanded=False):
                 us_result = st.text_input("Ultrasound Findings", value="Normal graft, RI=0.64")
                 dxa_score = st.number_input("DXA T-Score", value=-0.8, step=0.1)
                 colonoscopy_date = st.text_input("Colonoscopy Status", value="Cleared")
@@ -269,12 +232,12 @@ if selected_role == "patient":
                     st.stop()
 
                 lab_b64, lab_fname = None, None
-                if 'uploaded_lab_file' in locals() and uploaded_lab_file is not None:
+                if uploaded_lab_file is not None:
                     lab_b64 = base64.b64encode(uploaded_lab_file.read()).decode('utf-8')
                     lab_fname = uploaded_lab_file.name
 
                 scan_b64, scan_fname = None, None
-                if 'uploaded_scan_file' in locals() and uploaded_scan_file is not None:
+                if uploaded_scan_file is not None:
                     scan_b64 = base64.b64encode(uploaded_scan_file.read()).decode('utf-8')
                     scan_fname = uploaded_scan_file.name
 
@@ -283,30 +246,31 @@ if selected_role == "patient":
                     "patient_name": selected_patient_name.strip(),
                     "transplant_date": datetime.combine(tx_date_input, datetime.min.time()),
                     "timestamp": datetime.now(),
-                    "weight_kg": weight,
-                    "systolic_bp": sbp,
-                    "diastolic_bp": dbp,
-                    "heart_rate": hr,
-                    "temperature_f": temp,
+                    "weight_kg": float(weight),
+                    "systolic_bp": int(sbp),
+                    "diastolic_bp": int(dbp),
+                    "heart_rate": int(hr),
+                    "temperature_f": float(temp),
                     "symptoms": symptoms,
-                    "creatinine": creatinine,
-                    "tacrolimus": tacrolimus,
-                    "bkv_load": bkv_load,
+                    "creatinine": float(creatinine),
+                    "tacrolimus": float(tacrolimus),
+                    "bkv_load": int(bkv_load),
                     "dsa_status": dsa_status,
                     "lab_file_base64": lab_b64,
                     "lab_file_name": lab_fname,
                     "us_findings": us_result,
-                    "dxa_score": dxa_score,
+                    "dxa_score": float(dxa_score),
                     "colonoscopy": colonoscopy_date,
                     "cancer_screening": cancer_screening,
                     "scan_file_base64": scan_b64,
                     "scan_file_name": scan_fname
                 }
+                
                 vitals_col.insert_one(new_log)
                 st.session_state["submission_success"] = f"✅ Check-in recorded for **{selected_patient_name.strip()}**!"
                 st.rerun()
 
-    # --- TAB 2: UNIFIED CARE TEAM CHAT & SAFETY RULES ---
+    # --- TAB 2: MESSAGING THREADS ---
     with tab_care_team:
         st.markdown("#### Care Team Messages")
         
@@ -323,29 +287,29 @@ if selected_role == "patient":
                     badge = "🔴" if severity == "Urgent Action Required" else ("🟡" if severity == "Follow-up Recommended" else "🟢")
                     
                     with st.expander(f"{badge} {severity} ({notif.get('timestamp', datetime.now()).strftime('%b %d, %H:%M')})", expanded=True):
-                        st.markdown(f"""
-                        <div class="chat-doc">
-                            <strong>👨‍⚕️ Care Team</strong> <em>({notif.get('timestamp', datetime.now()).strftime('%b %d, %H:%M')})</em><br/>
-                            {notif.get('message', '')}
-                        </div>
-                        """, unsafe_allow_html=True)
                         
+                        # Root Message from Doctor
+                        with st.chat_message("assistant", avatar="👨‍⚕️"):
+                            st.write(f"**Care Team** _({notif.get('timestamp', datetime.now()).strftime('%b %d, %H:%M')})_")
+                            st.write(notif.get("message", ""))
+
+                        # Replies Loop
                         for reply in notif.get("replies", []):
-                            sender_icon = "📱" if reply.get("sender") == "patient" else "👨‍⚕️"
-                            css_class = "chat-patient" if reply.get("sender") == "patient" else "chat-doc"
-                            sender_title = selected_patient_name if reply.get("sender") == "patient" else "Doctor"
+                            is_patient = reply.get("sender") == "patient"
+                            avatar = "📱" if is_patient else "👨‍⚕️"
+                            role = "user" if is_patient else "assistant"
+                            author = selected_patient_name if is_patient else "Doctor"
                             
-                            st.markdown(f"""
-                            <div class="{css_class}">
-                                <strong>{sender_icon} {sender_title}</strong> <em>({reply.get('timestamp', datetime.now()).strftime('%b %d, %H:%M')})</em><br/>
-                                {reply.get('text', '')}
-                            </div>
-                            """, unsafe_allow_html=True)
-                        
+                            with st.chat_message(role, avatar=avatar):
+                                st.write(f"**{author}** _({reply.get('timestamp', datetime.now()).strftime('%b %d, %H:%M')})_")
+                                st.write(reply.get("text", ""))
+
+                        st.write("---")
                         col_ack, col_reply = st.columns([1, 1])
+                        
                         with col_ack:
                             if notif.get("acknowledged"):
-                                st.caption("✅ Acknowledged")
+                                st.caption("✅ Acknowledged by you")
                             else:
                                 if st.button("Confirm Read", key=f"ack_{notif['_id']}"):
                                     notifs_col.update_one({"_id": notif["_id"]}, {"$set": {"acknowledged": True, "ack_timestamp": datetime.now()}})
@@ -380,17 +344,17 @@ if selected_role == "patient":
             st.write("**Diet:** Avoid Grapefruit, Pomegranate, NSAIDs (Ibuprofen/Advil), raw foods.")
 
 # =========================================================
-# VIEW 2: ACCORDION CLINICAL DASHBOARD (HORIZONTAL/COLLAPSIBLE)
+# VIEW 2: CLINICAL DASHBOARD VIEW
 # =========================================================
 elif selected_role == "doctor":
-    st.caption("⚠️ **Notice:** Decision-support tool only. Verify patient logs prior to taking clinical action.")
+    st.caption("⚠️ **Notice:** Decision-support tool only. Verify raw patient logs prior to taking clinical action.")
 
-    patient_names = vitals_col.distinct("patient_name")
+    patient_names = sorted(vitals_col.distinct("patient_name"))
 
     if not patient_names:
-        st.info("No patient records found.")
+        st.info("No patient records found in the system.")
     else:
-        # --- 1. PATIENT SELECTION DROPDOWN ---
+        # --- 1. PATIENT SELECTION SELECTBOX ---
         patient_summary_list = []
         patient_map = {}
 
@@ -423,7 +387,7 @@ elif selected_role == "doctor":
         amber_flags = active_patient["amber_flags"]
         days_post_op = active_patient["days_post_op"]
 
-        # --- 2. HEADER SUMMARY CARDS ---
+        # --- 2. PATIENT HIGHLIGHT METRICS ---
         st.divider()
         st.markdown(f"### {p_name} — Day {days_post_op} Post-Op")
 
@@ -439,11 +403,11 @@ elif selected_role == "doctor":
         v4.metric("Creatinine", f"{latest.get('creatinine', 'N/A')} mg/dL")
         v5.metric("Tacrolimus", f"{latest.get('tacrolimus', 'N/A')} ng/mL")
 
-        st.markdown("<br/>", unsafe_allow_html=True)
+        st.write("")
 
-        # --- 3. ACCORDION (COLLAPSIBLE HORIZONTAL EXPANDERS) ---
+        # --- 3. EXPANDABLE CLINICAL VIEWS ---
         
-        # ACCORDION SECTION 1: OVERVIEW & LABS
+        # SECTION 1: OVERVIEW & LAB DIAGNOSTICS
         with st.expander("🩺 1. Primary Overview & Diagnostic Labs", expanded=True):
             c_left, c_right = st.columns(2)
             with c_left:
@@ -463,7 +427,7 @@ elif selected_role == "doctor":
             if reported_symptoms:
                 st.error(f"🚩 **Reported Symptoms:** {', '.join(reported_symptoms)}")
 
-        # ACCORDION SECTION 2: PARAMETER TREND ANALYSIS
+        # SECTION 2: PARAMETER TREND ANALYSIS
         with st.expander("📈 2. Parameter Trend Analysis", expanded=False):
             df_p = pd.DataFrame(p_docs)
             trend_param = st.selectbox(
@@ -490,7 +454,7 @@ elif selected_role == "doctor":
                     fig.add_hline(y=4.0, line_dash="dash", line_color="orange", annotation_text="Low Bound (4.0)")
 
                 fig.update_layout(
-                    height=280,
+                    height=300,
                     margin=dict(l=10, r=10, t=20, b=20),
                     xaxis_title="Date",
                     yaxis_title=trend_param.capitalize(),
@@ -498,7 +462,7 @@ elif selected_role == "doctor":
                 )
                 st.plotly_chart(fig, use_container_width=True)
 
-        # ACCORDION SECTION 3: MESSAGES & ORDERS
+        # SECTION 3: MESSAGING & ORDERS
         with st.expander("💬 3. Care Team Messaging & Orders", expanded=False):
             doc_notifs = list(notifs_col.find({"patient_name": p_name}).sort("timestamp", -1))
             
@@ -529,24 +493,23 @@ elif selected_role == "doctor":
                 for d_notif in doc_notifs:
                     ack_status = "✅ Read" if d_notif.get("acknowledged") else "⏳ Unread"
                     with st.expander(f"Thread: {d_notif.get('severity', 'Notice')} ({d_notif.get('timestamp', datetime.now()).strftime('%b %d, %H:%M')}) - {ack_status}"):
-                        st.markdown(f"""
-                        <div class="chat-doc">
-                            <strong>👨‍⚕️ You</strong> <em>({d_notif.get('timestamp', datetime.now()).strftime('%b %d, %H:%M')})</em><br/>
-                            {d_notif.get('message', '')}
-                        </div>
-                        """, unsafe_allow_html=True)
-
-                        for r in d_notif.get("replies", []):
-                            r_icon = "📱" if r.get("sender") == "patient" else "👨‍⚕️"
-                            r_css = "chat-patient" if r.get("sender") == "patient" else "chat-doc"
-                            r_author = p_name if r.get("sender") == "patient" else "Doctor"
-                            st.markdown(f"""
-                            <div class="{r_css}">
-                                <strong>{r_icon} {r_author}</strong> <em>({r.get('timestamp', datetime.now()).strftime('%b %d, %H:%M')})</em><br/>
-                                {r.get('text', '')}
-                            </div>
-                            """, unsafe_allow_html=True)
                         
+                        # Root Message from Doctor
+                        with st.chat_message("assistant", avatar="👨‍⚕️"):
+                            st.write(f"**You** _({d_notif.get('timestamp', datetime.now()).strftime('%b %d, %H:%M')})_")
+                            st.write(d_notif.get("message", ""))
+
+                        # Replies
+                        for r in d_notif.get("replies", []):
+                            is_patient = r.get("sender") == "patient"
+                            r_avatar = "📱" if is_patient else "👨‍⚕️"
+                            r_role = "user" if is_patient else "assistant"
+                            r_author = p_name if is_patient else "Doctor"
+
+                            with st.chat_message(r_role, avatar=r_avatar):
+                                st.write(f"**{r_author}** _({r.get('timestamp', datetime.now()).strftime('%b %d, %H:%M')})_")
+                                st.write(r.get("text", ""))
+
                         with st.popover("💬 Reply"):
                             doc_reply_txt = st.text_area("Reply:", key=f"doc_reply_txt_{d_notif['_id']}")
                             if st.button("Send Reply", key=f"doc_reply_btn_{d_notif['_id']}"):
@@ -562,16 +525,27 @@ elif selected_role == "doctor":
             else:
                 st.caption("No prior message threads.")
 
-        # ACCORDION SECTION 4: ATTACHED REPORTS & SCANS
+        # SECTION 4: ATTACHED REPORTS
         with st.expander("📥 4. Attached Files & Reports", expanded=False):
             st.markdown("##### Downloadable Attachments")
             d1, d2 = st.columns(2)
+            
             if latest.get("lab_file_base64"):
-                d1.download_button("📄 Download Lab PDF", base64.b64decode(latest["lab_file_base64"]), file_name=latest.get("lab_file_name", "lab.pdf"), key=f"dl_lab_{p_name}")
+                d1.download_button(
+                    "📄 Download Lab PDF", 
+                    base64.b64decode(latest["lab_file_base64"]), 
+                    file_name=latest.get("lab_file_name", "lab.pdf"), 
+                    key=f"dl_lab_{p_name}"
+                )
             else:
-                d1.caption("No lab PDF uploaded.")
+                d1.caption("No lab file attached to latest record.")
                 
             if latest.get("scan_file_base64"):
-                d2.download_button("🖼️ Download Scan Image/PDF", base64.b64decode(latest["scan_file_base64"]), file_name=latest.get("scan_file_name", "scan.pdf"), key=f"dl_scan_{p_name}")
+                d2.download_button(
+                    "🖼️ Download Scan Image/PDF", 
+                    base64.b64decode(latest["scan_file_base64"]), 
+                    file_name=latest.get("scan_file_name", "scan.pdf"), 
+                    key=f"dl_scan_{p_name}"
+                )
             else:
-                d2.caption("No scan image uploaded.")
+                d2.caption("No scan file attached to latest record.")
