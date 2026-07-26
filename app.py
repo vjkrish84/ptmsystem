@@ -374,14 +374,14 @@ st.sidebar.divider()
 active_rule_doc = rules_col.find_one({"active": True}) or {}
 # render_clinical_disclaimer()
 st.sidebar.caption(f"Active Rule Version: **{active_rule_doc.get('ruleset_id', 'N/A')}**")
-st.sidebar.caption(st.warning(
+st.sidebar.caption(
         "⚠️ **CLINICAL DECISION-SUPPORT DISCLAIMER:** "
         "This application is an auxiliary clinical decision-support tool intended to assist health professionals. "
         "It does **not** replace independent clinical evaluation, direct physical examination, or professional medical judgment. "
         "All automated triage statuses (RED/AMBER/GREEN), lab trend evaluations, medication interaction flags, and rule-based warnings "
         "must be independently verified by a licensed clinician prior to making any treatment, prescription, or intervention decisions.",
         icon="🩺"
-    ))
+    )
 
 all_registered_patients = sorted(patients_col.distinct("patient_name")) or ["Sarah Connor"]
 
