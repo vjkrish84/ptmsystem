@@ -17,6 +17,18 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+
+def render_clinical_disclaimer():
+    """Renders a persistent, regulatory-compliant clinical warning banner."""
+    st.warning(
+        "⚠️ **CLINICAL DECISION-SUPPORT DISCLAIMER:** "
+        "This application is an auxiliary clinical decision-support tool intended to assist health professionals. "
+        "It does **not** replace independent clinical evaluation, direct physical examination, or professional medical judgment. "
+        "All automated triage statuses (RED/AMBER/GREEN), lab trend evaluations, medication interaction flags, and rule-based warnings "
+        "must be independently verified by a licensed clinician prior to making any treatment, prescription, or intervention decisions.",
+        icon="🩺"
+    )
+    
 def inject_custom_design():
     """Injects responsive CSS for mobile viewports, single-column stacking, and typography."""
     st.markdown("""
@@ -360,6 +372,7 @@ active_role = st.sidebar.radio(
 
 st.sidebar.divider()
 active_rule_doc = rules_col.find_one({"active": True}) or {}
+render_clinical_disclaimer()
 st.sidebar.caption(f"Active Rule Version: **{active_rule_doc.get('ruleset_id', 'N/A')}**")
 
 all_registered_patients = sorted(patients_col.distinct("patient_name")) or ["Sarah Connor"]
