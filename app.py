@@ -1027,6 +1027,9 @@ elif active_role == "Transplant Coordinator":
 elif active_role == "System Administrator":
     st.header("⚙️ Dynamic System Governance & Rules Engine")
 
+    # ---------------------------------------------------------
+    # 1. Live Rules Engine Configuration
+    # ---------------------------------------------------------
     with st.expander("📜 1. Live Rules Engine Configuration (RS-DEMO)", expanded=False):
         st.markdown("##### Update Active Rule Thresholds in MongoDB")
         active_ruleset = rules_col.find_one({"active": True}) or {}
@@ -1042,29 +1045,35 @@ elif active_role == "System Administrator":
             new_creat_high = c4.number_input("Creatinine Upper Limit:", value=float(params.get("creatinine_high", 1.8)))
 
             if st.form_submit_button("Publish Rule Set Updates"):
-                rules_col.update_one(
-                    {"_id": active_ruleset["_id"]},
-                    {"$set": {
-                        "parameters.weight_spike_kg": new_wt,
-                        "parameters.fever_temp_f": new_fever,
-                        "parameters.tacrolimus_high": new_tac_high,
-                        "parameters.creatinine_high": new_creat_high,
-                        "updated_at": datetime.now(timezone.utc)
-                    }}
-                )
-                log_audit_event("Admin", "ADMIN-01", "UPDATE_TRIAGE_RULES", {
-                    "ruleset_id": active_ruleset.get("ruleset_id"),
-                    "new_parameters": {
-                        "weight_spike_kg": new_wt,
-                        "fever_temp_f": new_fever,
-                        "tacrolimus_high": new_tac_high,
-                        "creatinine_high": new_creat_high
-                    }
-                })
-                st.success(" ✅ Rules engine threshold updated in MongoDB and audit log!")
-                st.rerun()
+                try:
+                    rules_col.update_one(
+                        {"_id": active_ruleset["_id"]},
+                        {"$set": {
+                            "parameters.weight_spike_kg": new_wt,
+                            "parameters.fever_temp_f": new_fever,
+                            "parameters.tacrolimus_high": new_tac_high,
+                            "parameters.creatinine_high": new_creat_high,
+                            "updated_at": datetime.now(timezone.utc)
+                        }}
+                    )
+                    log_audit_event("Admin", "ADMIN-01", "UPDATE_TRIAGE_RULES", {
+                        "ruleset_id": active_ruleset.get("ruleset_id"),
+                        "new_parameters": {
+                            "weight_spike_kg": new_wt,
+                            "fever_temp_f": new_fever,
+                            "tacrolimus_high": new_tac_high,
+                            "creatinine_high": new_creat_high
+                        }
+                    })
+                    st.toast("✅ Rules engine updated & audited!", icon="⚙️")
+                    st.success("✅ Rules engine threshold updated in MongoDB and audit log!")
+                except Exception as e:
+                    st.error(f"❌ Failed to update rules: {e}")
 
-    with st.expander("🛠️ 2. Custom Parameter(s) To be Evaluated", expanded=False):
+    # ---------------------------------------------------------
+    # 2. Dynamic Custom Parameters Configurator
+    # ---------------------------------------------------------
+    with st.expander("🛠️ 2. Custom Parameter(s) Configurator", expanded=False):
         st.caption("Add new parameters to the patient intake forms in real time.")
         
         col1, col2, col3 = st.columns([2, 2, 1])
@@ -1074,22 +1083,38 @@ elif active_role == "System Administrator":
             new_field_type = st.selectbox("Data Type", ["Number", "Text", "Select"])
         with col3:
             new_field_unit = st.text_input("Unit (e.g. ng/mL)")
-    
+
         if st.button("➕ Add Parameter to Patient Form", type="primary"):
-            if new_field_name:
-                db["schema_config"].update_one(
-                    {"field_name": new_field_name, "entity": "patient_input"},
-                    {"$set": {
-                        "field_name": new_field_name,
+            if new_field_name.strip():
+                try:
+                    db["schema_config"].update_one(
+                        {"field_name": new_field_name.strip(), "entity": "patient_input"},
+                        {"$set": {
+                            "field_name": new_field_name.strip(),
+                            "field_type": new_field_type,
+                            "unit": new_field_unit.strip(),
+                            "entity": "patient_input"
+                        }},
+                        upsert=True
+                    )
+                    
+                    # Log audit trail for custom parameter modification
+                    log_audit_event("Admin", "ADMIN-01", "CREATE_CUSTOM_MARKER", {
+                        "field_name": new_field_name.strip(),
                         "field_type": new_field_type,
-                        "unit": new_field_unit,
-                        "entity": "patient_input"
-                    }},
-                    upsert=True
-                )
-                st.success(f"Added '{new_field_name}' dynamically!")
-                st.rerun()
-    
+                        "unit": new_field_unit.strip()
+                    })
+                    
+                    st.toast(f"✅ Marker '{new_field_name}' added!", icon="🧪")
+                    st.success(f"✅ Added parameter '{new_field_name}' dynamically and committed to Audit Trail!")
+                except Exception as e:
+                    st.error(f"❌ Database write error: {e}")
+            else:
+                st.warning("⚠️ Please provide a valid parameter name before saving.")
+
+    # ---------------------------------------------------------
+    # 3. Registered Patient Directory
+    # ---------------------------------------------------------
     with st.expander("👥 3. Registered Patient Directory", expanded=False):
         all_patients = list(patients_col.find({}, {"_id": 0}))
         if all_patients:
@@ -1100,15 +1125,25 @@ elif active_role == "System Administrator":
         else:
             st.caption("No patient profiles registered.")
 
+    # ---------------------------------------------------------
+    # 4. Live System Audit Logs
+    # ---------------------------------------------------------
     with st.expander("🛡️ 4. Live System Audit Logs", expanded=False):
         st.markdown("##### 🔍 Global Immutable Audit Trail")
         logs = list(audit_col.find().sort("timestamp", -1))
         if logs:
             df_logs = pd.DataFrame(logs)
+            
+            # Format timestamp cleanly
+            if "timestamp" in df_logs.columns:
+                df_logs["timestamp"] = pd.to_datetime(df_logs["timestamp"]).dt.strftime("%Y-%m-%d %H:%M:%S UTC")
+                
+            # Stringify details dict so pandas displays clean JSON text in tables
+            if "details" in df_logs.columns:
+                df_logs["details"] = df_logs["details"].apply(lambda x: str(x) if isinstance(x, dict) else x)
+
             target_audit_cols = ["timestamp", "actor_role", "actor_id", "action", "details"]
             df_audit_safe = df_logs.reindex(columns=target_audit_cols)
             st.dataframe(df_audit_safe, use_container_width=True)
         else:
-            st.caption("No audit events logged yet.")
-
-    
+            st.caption("No audit events logged yet.")    
