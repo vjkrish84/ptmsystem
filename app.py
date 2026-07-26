@@ -649,6 +649,8 @@ elif active_role == "Caregiver Proxy View":
     with st.expander("💬 Care Team Messaging", expanded=False):
         render_communication_hub(patient_name, "Caregiver Proxy View")
 
+    with st.expander("📋 Physician Consultation Notes", expanded=False):
+        render_clinical_notes_viewer(patient_name)
 # =========================================================
 # ROLE 3: DOCTOR (NEPHROLOGIST) WORKSPACE
 # =========================================================
