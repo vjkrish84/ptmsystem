@@ -18,13 +18,13 @@ st.set_page_config(
 )
 
 def inject_custom_design():
-    """Injects responsive CSS for mobile viewports, FAB floating menu, and unconstraining scroll height on nested expanders."""
+    """Injects responsive CSS for mobile viewports, Apple-style Control Center navigation drawer, and unconstraining scroll height on nested expanders."""
     st.markdown("""
     <style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
     
     html, body, [class*="css"] {
-        font-family: 'Inter', sans-serif;
+        font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Inter', sans-serif;
     }
 
     /* Prevent mobile scroll trapping inside Streamlit expanders */
@@ -40,8 +40,41 @@ def inject_custom_design():
         overflow: visible !important;
     }
 
-    /* Floating Action Button (FAB) & Bottom Sheet for Mobile Navigation */
+    /* Apple Control Center Style Floating Drawer Button (Top-Right / Bottom-Right) */
+    .apple-control-center-container {
+        position: fixed;
+        top: 60px;
+        right: 20px;
+        z-index: 999999;
+    }
+
+    .apple-control-center-container [data-testid="stPopover"] > button {
+        background: rgba(255, 255, 255, 0.75) !important;
+        backdrop-filter: blur(16px) saturate(180%) !important;
+        -webkit-backdrop-filter: blur(16px) saturate(180%) !important;
+        border: 1px solid rgba(209, 213, 219, 0.4) !important;
+        border-radius: 20px !important;
+        padding: 6px 16px !important;
+        box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.12) !important;
+        color: #1c1c1e !important;
+        font-weight: 600 !important;
+        font-size: 14px !important;
+        transition: all 0.25s ease !important;
+    }
+
+    .apple-control-center-container [data-testid="stPopover"] > button:hover {
+        background: rgba(255, 255, 255, 0.9) !important;
+        box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.2) !important;
+        transform: scale(1.02);
+    }
+
     @media (max-width: 768px) {
+        .apple-control-center-container {
+            top: auto;
+            bottom: 24px;
+            right: 18px;
+        }
+        
         [data-testid="column"] {
             width: 100% !important;
             flex: 1 1 100% !important;
@@ -51,68 +84,36 @@ def inject_custom_design():
         [data-testid="stMetric"] {
             padding: 10px !important;
             background-color: #f8f9fa;
-            border-radius: 8px;
+            border-radius: 12px;
             border: 1px solid #e9ecef;
         }
-
-        /* Target the floating nav container */
-        .mobile-fab-container {
-            position: fixed;
-            bottom: 20px;
-            right: 20px;
-            z-index: 999999;
-        }
-
-        .mobile-fab-container [data-testid="stPopover"] > button {
-            border-radius: 50px !important;
-            width: 60px !important;
-            height: 60px !important;
-            background-color: #0066cc !important;
-            color: white !important;
-            box-shadow: 0px 4px 12px rgba(0,0,0,0.3) !important;
-            border: none !important;
-            font-size: 24px !important;
-            display: flex !important;
-            align-items: center !important;
-            justify-content: center !important;
-        }
-        
-        .mobile-fab-container [data-testid="stPopover"] > button:hover {
-            background-color: #004999 !important;
-        }
     }
 
-    /* Hide FAB on desktop screens */
-    @media (min-width: 769px) {
-        .mobile-fab-container {
-            display: none !important;
-        }
-    }
-
+    /* Apple-style status ribbons */
     .ribbon-red {
-        background-color: #ffebe9;
-        color: #cf222e;
-        padding: 10px 16px;
-        border-radius: 6px;
-        border-left: 6px solid #cf222e;
+        background-color: rgba(255, 59, 48, 0.12);
+        color: #d70015;
+        padding: 12px 16px;
+        border-radius: 12px;
+        border-left: 4px solid #ff3b30;
         font-weight: 600;
         margin-bottom: 12px;
     }
     .ribbon-amber {
-        background-color: #fff8c5;
-        color: #9a6700;
-        padding: 10px 16px;
-        border-radius: 6px;
-        border-left: 6px solid #d4a72c;
+        background-color: rgba(255, 149, 0, 0.12);
+        color: #b25000;
+        padding: 12px 16px;
+        border-radius: 12px;
+        border-left: 4px solid #ff9500;
         font-weight: 600;
         margin-bottom: 12px;
     }
     .ribbon-green {
-        background-color: #dafbe1;
-        color: #1a7f37;
-        padding: 10px 16px;
-        border-radius: 6px;
-        border-left: 6px solid #1a7f37;
+        background-color: rgba(52, 199, 89, 0.12);
+        color: #248a3d;
+        padding: 12px 16px;
+        border-radius: 12px;
+        border-left: 4px solid #34c759;
         font-weight: 600;
         margin-bottom: 12px;
     }
@@ -293,8 +294,8 @@ def render_vitals_trends(patient_name: str):
 
     with col_t1:
         fig1 = go.Figure()
-        fig1.add_trace(go.Scatter(x=df["Formatted_Time"], y=df.get("weight_kg", []), mode="lines+markers", name="Weight (kg)", line=dict(color="#1f77b4", width=3)))
-        fig1.add_trace(go.Scatter(x=df["Formatted_Time"], y=df.get("temperature_f", []), mode="lines+markers", name="Temp (°F)", yaxis="y2", line=dict(color="#ff7f0e", width=2, dash="dash")))
+        fig1.add_trace(go.Scatter(x=df["Formatted_Time"], y=df.get("weight_kg", []), mode="lines+markers", name="Weight (kg)", line=dict(color="#007aff", width=3)))
+        fig1.add_trace(go.Scatter(x=df["Formatted_Time"], y=df.get("temperature_f", []), mode="lines+markers", name="Temp (°F)", yaxis="y2", line=dict(color="#ff9500", width=2, dash="dash")))
         
         fig1.update_layout(
             title=f"📈 Weight & Temp History ({len(df)} Entries)",
@@ -308,8 +309,8 @@ def render_vitals_trends(patient_name: str):
 
     with col_t2:
         fig2 = go.Figure()
-        fig2.add_trace(go.Scatter(x=df["Formatted_Time"], y=df.get("tacrolimus", []), mode="lines+markers", name="Tacrolimus (ng/mL)", line=dict(color="#2ca02c", width=3)))
-        fig2.add_trace(go.Scatter(x=df["Formatted_Time"], y=df.get("creatinine", []), mode="lines+markers", name="Creatinine (mg/dL)", yaxis="y2", line=dict(color="#d62728", width=3)))
+        fig2.add_trace(go.Scatter(x=df["Formatted_Time"], y=df.get("tacrolimus", []), mode="lines+markers", name="Tacrolimus (ng/mL)", line=dict(color="#34c759", width=3)))
+        fig2.add_trace(go.Scatter(x=df["Formatted_Time"], y=df.get("creatinine", []), mode="lines+markers", name="Creatinine (mg/dL)", yaxis="y2", line=dict(color="#ff3b30", width=3)))
         
         fig2.update_layout(
             title="🧪 Tacrolimus & Creatinine Labs",
@@ -323,7 +324,6 @@ def render_vitals_trends(patient_name: str):
 
     st.markdown("##### 📜 Chronological Entry Logs")
     
-    # Safe column reindexing to prevent KeyErrors
     target_cols = ["timestamp", "weight_kg", "systolic_bp", "diastolic_bp", "temperature_f", "heart_rate", "tacrolimus", "creatinine", "symptoms"]
     display_df = df.reindex(columns=target_cols).copy()
     display_df["timestamp"] = display_df["timestamp"].dt.strftime("%Y-%m-%d %H:%M UTC")
@@ -405,7 +405,6 @@ def render_diagnostics_viewer(patient_name: str, allow_upload: bool = False, act
                 }
                 diagnostics_col.insert_one(report_doc)
                 
-                # Append updated vital entry
                 vitals_col.insert_one({
                     "patient_name": patient_name,
                     "timestamp": datetime.now(timezone.utc),
@@ -453,9 +452,8 @@ def render_diagnostics_viewer(patient_name: str, allow_upload: bool = False, act
                     st.write(f"**Notes:** {r.get('notes')}")
 
 # ---------------------------------------------------------
-# 5. Sidebar Navigation & Mobile FAB Implementation
+# 5. State Initialization & Navigation
 # ---------------------------------------------------------
-# Session state initialization for selected role
 if "active_role" not in st.session_state:
     st.session_state.active_role = "Patient Portal"
 
@@ -467,9 +465,17 @@ role_options = [
     "System Administrator"
 ]
 
+role_icons = {
+    "Patient Portal": "📱",
+    "Caregiver Proxy View": "👥",
+    "Doctor (Nephrologist)": "👨‍⚕️",
+    "Transplant Coordinator": "📋",
+    "System Administrator": "⚙️"
+}
+
+# Sidebar Navigation (Standard Desktop Support)
 st.sidebar.title("🩺 Portal Navigation")
 
-# Update active role via Sidebar Radio
 selected_sidebar_role = st.sidebar.radio(
     "Select Operating Role:",
     role_options,
@@ -487,23 +493,23 @@ st.sidebar.caption(f"Active Rule Version: **{active_rule_doc.get('ruleset_id', '
 all_registered_patients = sorted(patients_col.distinct("patient_name")) or ["Sarah Connor"]
 
 # ---------------------------------------------------------
-# 6. Mobile FAB / Bottom Sheet Navigation Menu
+# 6. Apple-Style Control Center Right-Corner Panel
 # ---------------------------------------------------------
-st.markdown('<div class="mobile-fab-container">', unsafe_allow_html=True)
-with st.popover("⚙️", help="Mobile Navigation Menu"):
-    st.markdown("### 📱 Navigation Sheet")
-    st.caption("Quickly switch operating role or view status")
+st.markdown('<div class="apple-control-center-container">', unsafe_allow_html=True)
+with st.popover(f"  {role_icons.get(st.session_state.active_role, '⚙️')} Switch Role", help="Apple Control Center Switcher"):
+    st.markdown("###  Control Center")
+    st.caption("Tap to change operating context")
+    st.divider()
     
-    fab_role = st.radio(
-        "Switch View Role:",
-        role_options,
-        index=role_options.index(st.session_state.active_role),
-        key="fab_role_selector"
-    )
-    
-    if fab_role != st.session_state.active_role:
-        st.session_state.active_role = fab_role
-        st.rerun()
+    for r in role_options:
+        icon = role_icons.get(r, "📄")
+        is_active = (r == st.session_state.active_role)
+        label = f"{'✓ ' if is_active else ''}{icon} {r}"
+        
+        if st.button(label, key=f"cc_btn_{r}", use_container_width=True, type="primary" if is_active else "secondary"):
+            st.session_state.active_role = r
+            st.rerun()
+
 st.markdown('</div>', unsafe_allow_html=True)
 
 active_role = st.session_state.active_role
@@ -640,7 +646,6 @@ elif active_role == "Doctor (Nephrologist)":
 
         accordion_title = f"{status_badge} | {p_name} ({patient_doc.get('organ_type', 'Organ Transplant')}){summary_flags}"
 
-        # Level 1 Accordion: Main Patient Card (Closed by default)
         with st.expander(accordion_title, expanded=False):
             
             if status_code == "RED":
@@ -650,7 +655,6 @@ elif active_role == "Doctor (Nephrologist)":
             else:
                 st.markdown('<div class="ribbon-green">🟢 STABLE PATIENT STATUS: All vital signs within threshold bounds</div>', unsafe_allow_html=True)
 
-            # Sub-Accordion 1: Triage Rules & Manual Override
             with st.expander("🚨 1. Triage Logic Explanations & Manual Status Override", expanded=False):
                 if explanations:
                     for exp in explanations:
@@ -671,15 +675,12 @@ elif active_role == "Doctor (Nephrologist)":
                         st.success(f" ✅ Status overridden to {override_val} for {p_name} and logged in Audit Trail!")
                         st.rerun()
 
-            # Sub-Accordion 2: Multi-Entry Vitals & Trend Charts
             with st.expander("📊 2. Historical Vitals & Trend Analytics", expanded=False):
                 render_vitals_trends(p_name)
 
-            # Sub-Accordion 3: Urinalysis, Lab Panel & Imaging Evaluation
             with st.expander("🔬 3. Urinalysis, Lab Panel & Imaging Reports", expanded=False):
                 render_diagnostics_viewer(p_name, allow_upload=True, actor_role="Doctor")
 
-            # Sub-Accordion 4: Prescription Allergy & Interaction Clearance
             with st.expander("💊 4. Prescription Allergy & Drug Interaction Checker", expanded=False):
                 p_allergies = patient_doc.get("allergies", [])
                 st.write(f"**Documented Allergies:** `{', '.join(p_allergies) if p_allergies else 'None Recorded'}`")
@@ -699,7 +700,6 @@ elif active_role == "Doctor (Nephrologist)":
                     st.success(f"✅ Prescribing clearance confirmed for {rx_med}.")
                     log_audit_event("Doctor", "DOC-NEPH-01", "DRUG_CHECK_CLEARED", {"patient": p_name, "drug": rx_med})
 
-            # Sub-Accordion 5: Signed Consultation Notes
             with st.expander("📝 5. Consultation Notes (Publish to Patient)", expanded=False):
                 with st.form(key=f"note_form_{p_name}"):
                     hist = st.text_area("Subjective History:", value="Patient reports feeling well. No fever.")
@@ -863,7 +863,6 @@ elif active_role == "System Administrator":
         if all_patients:
             df_patients = pd.DataFrame(all_patients)
             target_cols = ["patient_name", "patient_id", "organ_type", "transplant_date", "allergies"]
-            # Reindex prevents KeyError if any patient is missing a field in MongoDB
             df_safe = df_patients.reindex(columns=target_cols)
             st.dataframe(df_safe, use_container_width=True)
         else:
