@@ -795,7 +795,7 @@ elif active_role == "Doctor (Nephrologist)":
                 
                 # Query patient vitals logs sorted by timestamp
                 patient_logs = list(
-                    vitals_col.find({"patient_name": selected_patient}).sort("timestamp", 1)
+                    vitals_col.find({"patient_name": p_name}).sort("timestamp", 1)
                 )
                 
                 # Extract all custom fields present across this patient's history
