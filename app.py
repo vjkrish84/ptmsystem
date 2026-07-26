@@ -478,32 +478,49 @@ role_icons = {
     "System Administrator": "⚙️"
 }
 
+# Control state key for the popover drawer
+if "control_center_open" not in st.session_state:
+    st.session_state.control_center_open = False
+
 all_registered_patients = sorted(patients_col.distinct("patient_name")) or ["Sarah Connor"]
+
+def switch_role_and_close(new_role):
+    """Callback function to change active role and close the popover."""
+    st.session_state.active_role = new_role
+    st.session_state.control_center_open = False
 
 # ---------------------------------------------------------
 # 6. Apple-Style Control Center Right-Corner Panel
 # ---------------------------------------------------------
 st.markdown('<div class="apple-control-center-container">', unsafe_allow_html=True)
 
-with st.popover(f"  {role_icons.get(st.session_state.active_role, '⚙️')} Switch Role", help="Apple Control Center Switcher"):
+with st.popover(
+    f"  {role_icons.get(st.session_state.active_role, '⚙️')} Switch Role",
+    help="Apple Control Center Switcher",
+    key="control_center_open",
+    on_change="rerun"
+):
     st.markdown("###  Control Center")
     st.caption("Select operating context")
     st.divider()
     
-    # Simple, direct action buttons.
-    # Selecting an item updates session_state and automatically collapses the popover container.
     for r in role_options:
         icon = role_icons.get(r, "📄")
         is_active = (r == st.session_state.active_role)
         label = f"{'✓ ' if is_active else '  '}{icon} {r}"
         
-        if st.button(label, key=f"cc_btn_{r}", use_container_width=True, type="primary" if is_active else "secondary"):
-            st.session_state.active_role = r
-            # Removing st.rerun() allows Streamlit's native popover auto-close to execute cleanly
+        st.button(
+            label,
+            key=f"cc_btn_{r}",
+            use_container_width=True,
+            type="primary" if is_active else "secondary",
+            on_click=switch_role_and_close,
+            args=(r,)
+        )
 
 st.markdown('</div>', unsafe_allow_html=True)
 
-# Assign active_role variable for downstream conditional blocks
+# Assign active_role globally after state & popover processing
 active_role = st.session_state.active_role
 # =========================================================
 # ROLE 1: PATIENT PORTAL
