@@ -250,6 +250,32 @@ def log_audit_event(actor_role: str, actor_id: str, action: str, details: dict):
         "details": details
     })
 
+def render_dynamic_patient_fields():
+    """Fetches custom field definitions from DB and dynamically renders inputs."""
+    custom_inputs = {}
+    
+    # Query field definitions defined by Admin
+    dynamic_fields = list(db["schema_config"].find({"entity": "patient_input"}))
+    
+    if dynamic_fields:
+        st.markdown("#### ⚙️ Additional Required Parameters")
+        
+        for field in dynamic_fields:
+            field_name = field.get("field_name")
+            field_type = field.get("field_type", "Text")
+            label = f"{field_name} ({field.get('unit', '')})" if field.get('unit') else field_name
+            
+            # Dynamically select widget based on Admin metadata
+            if field_type == "Number":
+                custom_inputs[field_name] = st.number_input(label, value=0.0, key=f"dyn_{field_name}")
+            elif field_type == "Select":
+                options = field.get("options", ["Normal", "Abnormal"])
+                custom_inputs[field_name] = st.selectbox(label, options=options, key=f"dyn_{field_name}")
+            else:  # Default Text
+                custom_inputs[field_name] = st.text_input(label, key=f"dyn_{field_name}")
+                
+    return custom_inputs
+
 def create_new_patient_profile(name, p_id, organ, tx_date, allergies_list, initial_meds):
     if patients_col.find_one({"patient_name": name}):
         return False, "Patient profile already exists with this name."
@@ -641,6 +667,8 @@ if active_role == "Patient Portal":
                 "Shortness of breath", "Incision drainage", "Nausea/Vomiting"
             ])
 
+            custom_data = render_dynamic_patient_fields()
+
             if st.form_submit_button("Submit Daily Vitals"):
                 latest_existing = vitals_col.find_one({"patient_name": selected_patient}, sort=[("timestamp", -1)]) or {}
                 
@@ -655,7 +683,8 @@ if active_role == "Patient Portal":
                     "diastolic_bp": int(dbp),
                     "symptoms": symptoms,
                     "creatinine": latest_existing.get("creatinine", 1.2),
-                    "tacrolimus": latest_existing.get("tacrolimus", 7.5)
+                    "tacrolimus": latest_existing.get("tacrolimus", 7.5),
+                    "custom_fields": custom_data
                 }
                 vitals_col.insert_one(log_doc)
                 log_audit_event("Patient", selected_patient, "SUBMIT_VITALS", {
@@ -666,7 +695,100 @@ if active_role == "Patient Portal":
 
     with st.expander("📊 2. Historical Vitals Log & Multi-Entry Trend Charts", expanded=False):
         render_vitals_trends(selected_patient)
-
+ 
+    with st.expander("🧪 Dynamic Custom Markers & Admin-Defined Parameters", expanded=False):
+        st.caption("Real-time telemetry for dynamic, schema-less parameters added via System Admin.")
+        
+        # Query patient vitals logs sorted by timestamp
+        patient_logs = list(
+            vitals_col.find({"patient_name": selected_patient}).sort("timestamp", 1)
+        )
+        
+        # Extract all custom fields present across this patient's history
+        custom_marker_names = set()
+        for log in patient_logs:
+            if "custom_fields" in log and isinstance(log["custom_fields"], dict):
+                custom_marker_names.update(log["custom_fields"].keys())
+                
+        if not custom_marker_names:
+            st.info("No custom parameters or dynamic markers logged for this patient yet.")
+        else:
+            # 1. Parameter Selection Bar
+            selected_marker = st.selectbox(
+                "Select Custom Marker to Inspect:",
+                options=sorted(list(custom_marker_names)),
+                key="doc_selected_custom_marker"
+            )
+            
+            # 2. Extract series data for selected marker
+            marker_series = []
+            for log in patient_logs:
+                c_fields = log.get("custom_fields", {})
+                if selected_marker in c_fields:
+                    val = c_fields[selected_marker]
+                    # Convert numeric values for analysis
+                    try:
+                        num_val = float(val)
+                    except (ValueError, TypeError):
+                        num_val = None
+                        
+                    marker_series.append({
+                        "Timestamp": log.get("timestamp"),
+                        "Value": val,
+                        "NumericValue": num_val
+                    })
+                    
+            if not marker_series:
+                st.warning(f"No records found for marker: {selected_marker}")
+            else:
+                df_marker = pd.DataFrame(marker_series)
+                numeric_df = df_marker.dropna(subset=["NumericValue"])
+                
+                # 3. KPI Summary Metrics
+                m_col1, m_col2, m_col3 = st.columns(3)
+                latest_val = df_marker.iloc[-1]["Value"]
+                
+                with m_col1:
+                    st.metric(f"Latest {selected_marker}", str(latest_val))
+                    
+                if not numeric_df.empty:
+                    with m_col2:
+                        st.metric("Historical Min", f"{numeric_df['NumericValue'].min():.2f}")
+                    with m_col3:
+                        st.metric("Historical Max", f"{numeric_df['NumericValue'].max():.2f}")
+                else:
+                    with m_col2:
+                        st.metric("Total Logs", len(df_marker))
+                    with m_col3:
+                        st.metric("Data Type", "Text / Categorical")
+                        
+                st.divider()
+                
+                # 4. Interactive Trend Chart (for numeric values) or Log Table
+                if not numeric_df.empty and len(numeric_df) > 1:
+                    fig = px.line(
+                        numeric_df,
+                        x="Timestamp",
+                        y="NumericValue",
+                        markers=True,
+                        title=f"Trend: {selected_marker} over Time",
+                        labels={"NumericValue": selected_marker, "Timestamp": "Date / Time"}
+                    )
+                    fig.update_layout(
+                        template="plotly_white",
+                        height=300,
+                        margin=dict(l=20, r=20, t=40, b=20)
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+                
+                # 5. Full Audit Log Table for this specific marker
+                st.markdown("##### Detailed Log History")
+                st.dataframe(
+                    df_marker[["Timestamp", "Value"]].sort_values(by="Timestamp", ascending=False),
+                    use_container_width=True,
+                    hide_index=True
+                )
+    
     with st.expander("🧪 3. Upload & View Diagnostic Reports (Labs / Urinalysis / Imaging)", expanded=False):
         render_diagnostics_viewer(selected_patient, allow_upload=True, actor_role="Patient")
 
@@ -960,3 +1082,29 @@ elif active_role == "System Administrator":
             st.dataframe(df_audit_safe, use_container_width=True)
         else:
             st.caption("No audit events logged yet.")
+
+    with st.expander("🛠️ Dynamic Schema & Field Configurator", expanded=False):
+        st.caption("Add new parameters to the patient intake forms in real time.")
+        
+        col1, col2, col3 = st.columns([2, 2, 1])
+        with col1:
+            new_field_name = st.text_input("Parameter Name (e.g. Tacrolimus Trough)")
+        with col2:
+            new_field_type = st.selectbox("Data Type", ["Number", "Text", "Select"])
+        with col3:
+            new_field_unit = st.text_input("Unit (e.g. ng/mL)")
+    
+        if st.button("➕ Add Parameter to Patient Form", type="primary"):
+            if new_field_name:
+                db["schema_config"].update_one(
+                    {"field_name": new_field_name, "entity": "patient_input"},
+                    {"$set": {
+                        "field_name": new_field_name,
+                        "field_type": new_field_type,
+                        "unit": new_field_unit,
+                        "entity": "patient_input"
+                    }},
+                    upsert=True
+                )
+                st.success(f"Added '{new_field_name}' dynamically!")
+                st.rerun()
