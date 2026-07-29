@@ -311,6 +311,7 @@ def send_feedback_gmail(category, rating, comment, actor_role):
 def render_feedback_floating_widget(active_role):
     """Renders a floating bottom-left popover icon for direct user feedback and Gmail integration."""
     st.markdown('<div class="feedback-floating-container">', unsafe_allow_html=True)
+    st.markdown("#### Your Feedback Matters ###")
     with st.popover("💬", help="Submit Feedback"):
         st.subheader("💬 Send Platform Feedback")
         st.caption("Found an issue or have a feature request? Let us know!")
