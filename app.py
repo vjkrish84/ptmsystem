@@ -35,7 +35,7 @@ def inject_clean_design():
         background-color: #ffffff;
         border-radius: 12px;
         box-shadow: 0 1px 3px rgba(0,0,0,0.05);
-        padding: 1rem;
+        padding: 1.25rem;
         margin-bottom: 1rem;
     }
 
@@ -65,28 +65,31 @@ def inject_clean_design():
         background-color: #fef2f2;
         color: #991b1b;
         border: 1px solid #fecaca;
-        padding: 6px 12px;
-        border-radius: 6px;
+        padding: 10px 16px;
+        border-radius: 8px;
         font-weight: 600;
-        font-size: 0.9rem;
+        font-size: 0.95rem;
+        margin-bottom: 1rem;
     }
     .status-badge-amber {
         background-color: #fffbeb;
         color: #92400e;
         border: 1px solid #fde68a;
-        padding: 6px 12px;
-        border-radius: 6px;
+        padding: 10px 16px;
+        border-radius: 8px;
         font-weight: 600;
-        font-size: 0.9rem;
+        font-size: 0.95rem;
+        margin-bottom: 1rem;
     }
     .status-badge-green {
         background-color: #f0fdf4;
         color: #166534;
         border: 1px solid #bbf7d0;
-        padding: 6px 12px;
-        border-radius: 6px;
+        padding: 10px 16px;
+        border-radius: 8px;
         font-weight: 600;
-        font-size: 0.9rem;
+        font-size: 0.95rem;
+        margin-bottom: 1rem;
     }
     </style>
     """, unsafe_allow_html=True)
@@ -153,7 +156,7 @@ if patients_col.count_documents({"patient_name": "Sarah Connor"}) == 0:
     })
 
 # ---------------------------------------------------------
-# 3. Helpers & Audit Engine
+# 3. Helpers & Core Engines
 # ---------------------------------------------------------
 def log_audit_event(actor_role: str, actor_id: str, action: str, details: dict):
     audit_col.insert_one({
@@ -273,7 +276,7 @@ def create_new_patient_profile(name, p_id, organ, tx_date, allergies_list, initi
     return True, "Patient profile successfully created!"
 
 # ---------------------------------------------------------
-# 4. Clean UI Rendering Components
+# 4. Shared Reusable UI Components
 # ---------------------------------------------------------
 def render_vitals_trends(patient_name: str):
     logs = list(vitals_col.find({"patient_name": patient_name}).sort("timestamp", 1))
@@ -289,17 +292,17 @@ def render_vitals_trends(patient_name: str):
         fig1 = go.Figure()
         fig1.add_trace(go.Scatter(x=df["Formatted_Time"], y=df.get("weight_kg", []), mode="lines+markers", name="Weight (kg)", line=dict(color="#2563eb", width=2)))
         fig1.add_trace(go.Scatter(x=df["Formatted_Time"], y=df.get("temperature_f", []), mode="lines+markers", name="Temp (°F)", yaxis="y2", line=dict(color="#d97706", width=2, dash="dot")))
-        fig1.update_layout(title="Weight & Temperature History", height=260, margin=dict(l=10, r=10, t=35, b=10), yaxis2=dict(overlaying="y", side="right"))
+        fig1.update_layout(title="Weight & Temperature History", height=280, margin=dict(l=10, r=10, t=35, b=10), yaxis2=dict(overlaying="y", side="right"))
         st.plotly_chart(fig1, use_container_width=True)
 
     with col2:
         fig2 = go.Figure()
         fig2.add_trace(go.Scatter(x=df["Formatted_Time"], y=df.get("tacrolimus", []), mode="lines+markers", name="Tacrolimus (ng/mL)", line=dict(color="#16a34a", width=2)))
         fig2.add_trace(go.Scatter(x=df["Formatted_Time"], y=df.get("creatinine", []), mode="lines+markers", name="Creatinine (mg/dL)", yaxis="y2", line=dict(color="#dc2626", width=2)))
-        fig2.update_layout(title="Tacrolimus & Creatinine Markers", height=260, margin=dict(l=10, r=10, t=35, b=10), yaxis2=dict(overlaying="y", side="right"))
+        fig2.update_layout(title="Tacrolimus & Creatinine Markers", height=280, margin=dict(l=10, r=10, t=35, b=10), yaxis2=dict(overlaying="y", side="right"))
         st.plotly_chart(fig2, use_container_width=True)
 
-    with st.expander("📄 View Full Entry Logs"):
+    with st.expander("📄 View Detailed Log Table"):
         target_cols = ["timestamp", "weight_kg", "systolic_bp", "diastolic_bp", "temperature_f", "heart_rate", "tacrolimus", "creatinine", "symptoms"]
         display_df = df.reindex(columns=target_cols).copy()
         display_df["timestamp"] = display_df["timestamp"].dt.strftime("%Y-%m-%d %H:%M")
@@ -312,7 +315,7 @@ def render_communication_hub(patient_name: str, active_role: str):
     col_hist, col_send = st.columns([1.2, 1])
     
     with col_hist:
-        st.markdown("##### Communication Logs")
+        st.markdown("##### Transmission History")
         if not messages:
             st.info("No previous care team transmissions.")
         else:
@@ -324,9 +327,9 @@ def render_communication_hub(patient_name: str, active_role: str):
                 st.divider()
 
     with col_send:
-        st.markdown("##### Send Message")
+        st.markdown("##### Transmit Message")
         with st.form(key=f"msg_form_{patient_name}_{active_role}"):
-            msg_text = st.text_area("Message Detail:", height=80)
+            msg_text = st.text_area("Message Content:", height=90)
             msg_urgency = st.selectbox("Priority Level:", ["Routine Message", "Urgent Clinical Alert"])
             if st.form_submit_button("Send Transmission", use_container_width=True, type="primary"):
                 if msg_text.strip():
@@ -339,7 +342,7 @@ def render_communication_hub(patient_name: str, active_role: str):
                         "timestamp": datetime.now(timezone.utc)
                     })
                     log_audit_event(active_role, "LOCAL-USER", "SEND_MESSAGE", {"patient": patient_name, "urgency": msg_urgency})
-                    st.success("✅ Message transmitted!")
+                    st.success("✅ Transmission sent successfully!")
                     st.rerun()
 
 def render_diagnostics_viewer(patient_name: str, allow_upload: bool = False, actor_role: str = "Patient"):
@@ -351,12 +354,12 @@ def render_diagnostics_viewer(patient_name: str, allow_upload: bool = False, act
                 d_category = c1.selectbox("Report Category:", ["Comprehensive Lab Panel", "Urinalysis (UA)", "Ultrasound / Imaging Report"])
                 d_file = c2.file_uploader("Attach Document:", type=["pdf", "png", "jpg"])
                 
-                d_notes = st.text_input("Summary / Findings:")
+                d_notes = st.text_input("Summary Findings:")
                 ca, cb = st.columns(2)
                 c_val1 = ca.number_input("Serum Creatinine (mg/dL)", value=1.2, step=0.1)
                 c_val2 = cb.number_input("Tacrolimus Level (ng/mL)", value=7.5, step=0.1)
 
-                if st.form_submit_button("Upload & Commit Lab Record", type="primary", use_container_width=True):
+                if st.form_submit_button("Upload & Record Diagnostic", type="primary", use_container_width=True):
                     f_name = d_file.name if d_file else "Manual_Entry.pdf"
                     diagnostics_col.insert_one({
                         "patient_name": patient_name,
@@ -375,27 +378,52 @@ def render_diagnostics_viewer(patient_name: str, allow_upload: bool = False, act
                         "systolic_bp": 120, "diastolic_bp": 80, "symptoms": ["Lab Update"],
                         "creatinine": c_val1, "tacrolimus": c_val2
                     })
-                    st.success("✅ Report logged!")
+                    st.success("✅ Diagnostic report uploaded successfully!")
                     st.rerun()
 
     reports = list(diagnostics_col.find({"patient_name": patient_name}).sort("timestamp", -1))
     if not reports:
-        st.info("No recorded diagnostic reports.")
+        st.info("No diagnostic records available for this patient.")
     else:
         for r in reports:
             with st.container(border=True):
                 st.markdown(f"**{r.get('category')}** — `{r.get('timestamp').strftime('%b %d, %Y')}`")
                 st.caption(f"Uploaded by: {r.get('uploaded_by')} | File: {r.get('file_name')}")
                 st.write(f"Creatinine: **{r.get('creatinine')} mg/dL** | Tacrolimus: **{r.get('tacrolimus')} ng/mL**")
+                if r.get("notes"):
+                    st.caption(f"Notes: {r.get('notes')}")
+
+def render_feedback_section(actor_role: str):
+    with st.container(border=True):
+        st.markdown("##### 💬 Submit System Feedback")
+        with st.form(key=f"feedback_form_{actor_role}"):
+            f_cat = st.selectbox("Feedback Category:", ["Bug Report", "UI Layout Improvement", "Clinical Rule Adjustment", "General Feedback"])
+            f_rating = st.slider("Rating (1-5):", 1, 5, 5)
+            f_comment = st.text_area("Your Comments / Suggestions:")
+            
+            if st.form_submit_button("Submit Feedback", type="primary", use_container_width=True):
+                if f_comment.strip():
+                    feedback_col.insert_one({
+                        "role": actor_role,
+                        "category": f_cat,
+                        "rating": f_rating,
+                        "comment": f_comment.strip(),
+                        "timestamp": datetime.now(timezone.utc)
+                    })
+                    sent, email_msg = send_feedback_gmail(f_cat, f_rating, f_comment, actor_role)
+                    if sent:
+                        st.success("✅ Feedback saved and email notification sent to admin!")
+                    else:
+                        st.success("✅ Feedback saved to database! (Email notification skipped or unconfigured)")
+                    st.rerun()
 
 # ---------------------------------------------------------
-# 5. HEADER BAR & ROLE SELECTION (Fixed Overlap)
+# 5. Header Bar & Native Role Selector
 # ---------------------------------------------------------
 st.title("🩺 Enterprise Post-Transplant Portal")
 
-# Native Header Role Selector Bar (No popover overlaps)
 active_role = st.radio(
-    "Select Portal View:",
+    "Select Operating Role:",
     ["Patient Portal", "Caregiver Proxy", "Doctor Workspace", "Transplant Coordinator", "System Admin"],
     horizontal=True,
     label_visibility="collapsed"
@@ -413,7 +441,6 @@ if active_role == "Patient Portal":
     selected_patient = col_sel.selectbox("Active Patient Account:", options=all_registered_patients)
     p_profile = patients_col.find_one({"patient_name": selected_patient}) or {}
 
-    # Clear Metric Summary Header
     with st.container(border=True):
         m1, m2, m3, m4 = st.columns(4)
         m1.metric("Patient Name", selected_patient)
@@ -421,12 +448,13 @@ if active_role == "Patient Portal":
         m3.metric("Transplant Date", p_profile.get("transplant_date", "N/A"))
         m4.metric("Status", "🟢 Active Monitoring")
 
-    tab_vitals, tab_trends, tab_messages, tab_labs, tab_register = st.tabs([
+    tab_vitals, tab_trends, tab_messages, tab_labs, tab_register, tab_fb = st.tabs([
         "📝 Daily Vitals", 
         "📊 Trends & History", 
         "💬 Care Team Messages", 
         "🧪 Lab Reports", 
-        "👤 Register Profile"
+        "👤 Register Account",
+        "💬 Feedback"
     ])
 
     with tab_vitals:
@@ -497,6 +525,9 @@ if active_role == "Patient Portal":
                         else:
                             st.error(msg)
 
+    with tab_fb:
+        render_feedback_section("Patient")
+
 # ---------------------------------------------------------
 # ROLE 2: CAREGIVER PROXY VIEW
 # ---------------------------------------------------------
@@ -504,7 +535,7 @@ elif active_role == "Caregiver Proxy":
     st.subheader("👥 Caregiver Proxy Management")
     selected_patient = st.selectbox("Select Patient Profile:", options=all_registered_patients)
 
-    tab_trends, tab_messages, tab_labs = st.tabs(["📊 Patient Vitals", "💬 Care Team Messaging", "🧪 Diagnostic Reports"])
+    tab_trends, tab_messages, tab_labs, tab_fb = st.tabs(["📊 Patient Vitals", "💬 Care Team Messaging", "🧪 Diagnostic Reports", "💬 Feedback"])
 
     with tab_trends:
         render_vitals_trends(selected_patient)
@@ -514,6 +545,9 @@ elif active_role == "Caregiver Proxy":
 
     with tab_labs:
         render_diagnostics_viewer(selected_patient, allow_upload=False, actor_role="Caregiver")
+
+    with tab_fb:
+        render_feedback_section("Caregiver Proxy")
 
 # ---------------------------------------------------------
 # ROLE 3: DOCTOR WORKSPACE
@@ -529,38 +563,37 @@ elif active_role == "Doctor Workspace":
 
     status_code, red_flags, amber_flags, explanations = evaluate_clinical_triage(latest, prev)
 
-    # Status Bar Highlight
     if status_code == "RED":
-        st.markdown(f'<div class="status-badge-red">🔴 CRITICAL ALERT: {", ".join(red_flags) or "Requires Immediate Review"}</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="status-badge-red">🔴 CRITICAL ALERT: {", ".join(red_flags) or "Requires Immediate Clinical Review"}</div>', unsafe_allow_html=True)
     elif status_code == "AMBER":
-        st.markdown(f'<div class="status-badge-amber">🟡 WARNING: {", ".join(amber_flags) or "Parameter Spike Detected"}</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="status-badge-amber">🟡 WARNING: {", ".join(amber_flags) or "Parameter Deviation Spike Detected"}</div>', unsafe_allow_html=True)
     else:
-        st.markdown('<div class="status-badge-green">🟢 STABLE: All parameters within normal baseline limits</div>', unsafe_allow_html=True)
+        st.markdown('<div class="status-badge-green">🟢 STABLE: All clinical parameters within baseline ruleset limits</div>', unsafe_allow_html=True)
 
-    st.write("")
-
-    tab_triage, tab_vitals, tab_notes, tab_rx = st.tabs([
-        "🚨 Triage & Status", 
+    tab_triage, tab_vitals, tab_notes, tab_rx, tab_fb = st.tabs([
+        "🚨 Triage & Action", 
         "📊 Vital Trends", 
         "📝 Consultation Notes", 
-        "💊 Prescription Checker"
+        "💊 Drug Clearance",
+        "💬 Feedback"
     ])
 
     with tab_triage:
         with st.container(border=True):
-            st.markdown("##### Clinical Triage Overview")
+            st.markdown("##### Clinical Assessment & Status Control")
             for exp in explanations:
-                st.caption(f"• {exp}")
+                st.write(f"• {exp}")
 
             st.divider()
+            st.markdown("##### Override Triage Category")
             c_ov1, c_ov2 = st.columns([2, 1])
             override_val = c_ov1.selectbox("Override Status Level:", ["GREEN", "AMBER", "RED"])
             override_reason = c_ov2.text_input("Override Justification:")
-            if st.button("Apply Status Override", type="primary"):
+            if st.button("Apply Manual Status Override", type="primary"):
                 if latest:
                     vitals_col.update_one({"_id": latest["_id"]}, {"$set": {"override_status": override_val, "override_reason": override_reason}})
                     log_audit_event("Doctor", "DOC-01", "OVERRIDE_TRIAGE", {"patient": selected_p, "status": override_val})
-                    st.success("✅ Triage status overridden!")
+                    st.success("✅ Triage status override recorded!")
                     st.rerun()
 
     with tab_vitals:
@@ -572,106 +605,159 @@ elif active_role == "Doctor Workspace":
             with st.form("doc_notes_form"):
                 hist = st.text_area("Subjective History:", value="Patient feels well. No fever reported.")
                 exam = st.text_area("Objective Examination:", value="BP well controlled. Graft non-tender.")
-                disp = st.selectbox("Disposition:", ["Maintain Protocol", "Adjust Immunosuppression", "Order Outpatient Scan"])
-                if st.form_submit_button("Sign & Publish Note", type="primary", use_container_width=True):
+                disp = st.selectbox("Disposition Plan:", ["Maintain Current Protocol", "Adjust Immunosuppression Dosage", "Order Outpatient Graft Ultrasound"])
+                if st.form_submit_button("Sign & Publish Clinical Note", type="primary", use_container_width=True):
                     notes_col.insert_one({
                         "patient_name": selected_p, "doctor_name": "Dr. Sarah Jenkins",
                         "history": hist, "examination": exam, "disposition": disp,
                         "timestamp": datetime.now(timezone.utc)
                     })
-                    st.success("✅ Note published!")
+                    log_audit_event("Doctor", "DOC-01", "PUBLISH_NOTE", {"patient": selected_p, "disposition": disp})
+                    st.success("✅ Clinical note signed and published!")
                     st.rerun()
 
     with tab_rx:
         with st.container(border=True):
+            st.markdown("##### Drug Interaction & Contraindication Check")
             p_allergies = patient_doc.get("allergies", [])
-            st.write(f"Allergies on record: `{', '.join(p_allergies) if p_allergies else 'None'}`")
-            rx_med = st.selectbox("Test Medication Interaction:", ["Tacrolimus", "Ibuprofen (NSAID)", "Penicillin", "Erythromycin"])
+            st.write(f"Known Patient Allergies: `{', '.join(p_allergies) if p_allergies else 'None Recorded'}`")
+            rx_med = st.selectbox("Test Candidate Prescription:", ["Tacrolimus", "Ibuprofen (NSAID)", "Penicillin", "Erythromycin"])
             if rx_med == "Ibuprofen (NSAID)" and "NSAIDs" in p_allergies:
-                st.error("🚨 ALLERGY CONTRAINDICATION DETECTED")
+                st.error("🚨 ALLERGY CONTRAINDICATION DETECTED: Patient has recorded NSAID allergy!")
             elif rx_med == "Penicillin" and "Penicillin" in p_allergies:
-                st.error("🚨 ALLERGY CONTRAINDICATION DETECTED")
+                st.error("🚨 ALLERGY CONTRAINDICATION DETECTED: Patient has recorded Penicillin allergy!")
             elif rx_med == "Erythromycin":
-                st.warning("⚠️ CYP3A4 Interaction Warning")
+                st.warning("⚠️ CYP3A4 Interaction Warning: Potential elevation of Tacrolimus blood concentrations.")
             else:
                 st.success(f"✅ Prescribing cleared for {rx_med}.")
+
+    with tab_fb:
+        render_feedback_section("Doctor Workspace")
 
 # ---------------------------------------------------------
 # ROLE 4: TRANSPLANT COORDINATOR WORKFLOW
 # ---------------------------------------------------------
 elif active_role == "Transplant Coordinator":
     st.subheader("📋 Transplant Coordinator Workstation")
-    selected_p = st.selectbox("Select Patient Profile:", options=all_registered_patients)
+    selected_p = st.selectbox("Select Active Patient Profile:", options=all_registered_patients)
     p_profile = patients_col.find_one({"patient_name": selected_p}) or {}
 
-    tab_meds, tab_appts, tab_onboard = st.tabs(["💊 Medication Reconciliation", "📅 Appointments & Messages", "➕ Register Patient Profile"])
+    tab_meds, tab_appts, tab_onboard, tab_fb = st.tabs([
+        "💊 Medication Reconciliation", 
+        "📅 Appointments & Messages", 
+        "➕ Patient Onboarding",
+        "💬 Feedback"
+    ])
 
     with tab_meds:
         with st.container(border=True):
-            st.markdown("##### Active Prescriptions")
+            st.markdown("##### Medication Reconciliation Suite")
             meds = p_profile.get("current_medications", [])
             if meds:
                 for i, m in enumerate(meds):
                     ca, cb = st.columns([3, 1])
-                    ca.write(f"• **{m.get('drug')}**: {m.get('dose', m.get('EHR_dose', 'N/A'))}")
-                    if cb.button("Reconcile", key=f"rec_{i}"):
-                        st.success(f"Reconciled {m.get('drug')}")
+                    ca.write(f"• **{m.get('drug')}**: {m.get('dose', m.get('EHR_dose', 'N/A'))} — *Status: {m.get('status', 'Unverified')}*")
+                    if cb.button("Confirm Reconciled", key=f"rec_{i}"):
+                        st.success(f"✅ Reconciled {m.get('drug')}")
             else:
-                st.info("No recorded medications.")
+                st.info("No recorded medications for this patient.")
 
     with tab_appts:
         with st.container(border=True):
-            st.markdown("##### Schedule Appointment")
-            app_date = st.date_input("Date:")
-            app_type = st.selectbox("Type:", ["Graft Ultrasound", "Routine Labs", "Biopsy"])
-            if st.button("Confirm Appointment", type="primary"):
+            st.markdown("##### Schedule Patient Appointment")
+            app_date = st.date_input("Scheduled Date:")
+            app_type = st.selectbox("Appointment Type:", ["Graft Ultrasound", "Routine Outpatient Labs", "Renal Biopsy Consult"])
+            if st.button("Confirm Appointment Booking", type="primary"):
                 patients_col.update_one({"patient_name": selected_p}, {"$push": {"appointments": {"date": str(app_date), "type": app_type}}})
-                st.success("✅ Scheduled!")
+                log_audit_event("Coordinator", "COORD-01", "SCHEDULE_APPOINTMENT", {"patient": selected_p, "type": app_type, "date": str(app_date)})
+                st.success("✅ Appointment successfully scheduled!")
 
         render_communication_hub(selected_p, "Transplant Coordinator")
 
     with tab_onboard:
         with st.container(border=True):
-            st.markdown("##### Register New Profile")
+            st.markdown("##### Register Patient Profile")
             with st.form("coord_reg_form"):
                 c_name = st.text_input("Patient Full Name:")
                 c_id = st.text_input("MRN / Patient ID:")
                 c_organ = st.selectbox("Organ Type:", ["Kidney", "Liver", "Heart", "Lung", "Pancreas"])
                 c_tx_date = st.date_input("Transplant Date:", value=date.today())
+                c_allergies = st.text_input("Known Allergies (comma separated):", value="NSAIDs")
+                
                 if st.form_submit_button("Create Profile", type="primary", use_container_width=True):
                     if c_name.strip():
-                        create_new_patient_profile(c_name.strip(), c_id.strip(), c_organ, c_tx_date, ["NSAIDs"], [])
-                        st.success("✅ Profile created!")
-                        st.rerun()
+                        success, msg = create_new_patient_profile(
+                            c_name.strip(), c_id.strip(), c_organ, c_tx_date, [a.strip() for a in c_allergies.split(",")],
+                            [{"drug": "Tacrolimus", "dose": "3mg BID", "status": "Matched"}]
+                        )
+                        if success:
+                            st.success(f"✅ {msg}")
+                            st.rerun()
+                        else:
+                            st.error(msg)
+
+    with tab_fb:
+        render_feedback_section("Transplant Coordinator")
 
 # ---------------------------------------------------------
 # ROLE 5: SYSTEM ADMINISTRATOR
 # ---------------------------------------------------------
 elif active_role == "System Admin":
-    st.subheader("⚙️ System Governance & Clinical Rules Engine")
+    st.subheader("⚙️ System Governance & Governance Dashboard")
 
-    tab_rules, tab_audit, tab_feedback = st.tabs(["📜 Clinical Rules Engine", "🛡️ Audit Trail", "💬 User Feedback"])
+    tab_rules, tab_audit, tab_feedback = st.tabs([
+        "📜 Clinical Rules Engine", 
+        "🛡️ Governance Audit Log", 
+        "💬 User Feedback Stream"
+    ])
 
     with tab_rules:
         with st.container(border=True):
+            st.markdown("##### Live Clinical Threshold Parameters")
             active_ruleset = rules_col.find_one({"active": True}) or {}
             params = active_ruleset.get("parameters", {})
+            
             with st.form("update_rules"):
                 c1, c2 = st.columns(2)
-                new_wt = c1.number_input("Max 24h Weight Gain (kg)", value=float(params.get("weight_spike_kg", 1.5)))
-                new_fever = c2.number_input("Fever Threshold (°F)", value=float(params.get("fever_temp_f", 100.0)))
-                if st.form_submit_button("Publish Updated Ruleset", type="primary", use_container_width=True):
-                    rules_col.update_one({"_id": active_ruleset["_id"]}, {"$set": {"parameters.weight_spike_kg": new_wt, "parameters.fever_temp_f": new_fever}})
-                    st.success("✅ Rules updated!")
+                new_wt = c1.number_input("Max 24h Weight Gain Threshold (kg)", value=float(params.get("weight_spike_kg", 1.5)), step=0.1)
+                new_fever = c2.number_input("Fever Alert Threshold (°F)", value=float(params.get("fever_temp_f", 100.0)), step=0.1)
+                
+                c3, c4 = st.columns(2)
+                new_tac_hi = c3.number_input("Tacrolimus High Threshold (ng/mL)", value=float(params.get("tacrolimus_high", 12.0)), step=0.5)
+                new_creat_hi = c4.number_input("Creatinine High Threshold (mg/dL)", value=float(params.get("creatinine_high", 1.8)), step=0.1)
+
+                if st.form_submit_button("Publish Updated Ruleset Version", type="primary", use_container_width=True):
+                    rules_col.update_one(
+                        {"_id": active_ruleset["_id"]}, 
+                        {"$set": {
+                            "parameters.weight_spike_kg": new_wt,
+                            "parameters.fever_temp_f": new_fever,
+                            "parameters.tacrolimus_high": new_tac_hi,
+                            "parameters.creatinine_high": new_creat_hi
+                        }}
+                    )
+                    log_audit_event("System Admin", "ADMIN-01", "UPDATE_RULESET", {"weight_threshold": new_wt, "fever_threshold": new_fever})
+                    st.success("✅ Ruleset updated and published successfully!")
+                    st.rerun()
 
     with tab_audit:
-        logs = list(audit_col.find().sort("timestamp", -1))
-        if logs:
-            df_logs = pd.DataFrame(logs)
-            st.dataframe(df_logs.reindex(columns=["timestamp", "actor_role", "action", "details"]), use_container_width=True, hide_index=True)
+        with st.container(border=True):
+            st.markdown("##### System Action Audit Trail")
+            logs = list(audit_col.find().sort("timestamp", -1))
+            if logs:
+                df_logs = pd.DataFrame(logs)
+                df_logs["timestamp"] = df_logs["timestamp"].dt.strftime("%Y-%m-%d %H:%M:%S UTC")
+                st.dataframe(df_logs.reindex(columns=["timestamp", "actor_role", "actor_id", "action", "details"]), use_container_width=True, hide_index=True)
+            else:
+                st.info("No recorded audit logs.")
 
     with tab_feedback:
-        user_feedbacks = list(feedback_col.find().sort("timestamp", -1))
-        if user_feedbacks:
-            df_fb = pd.DataFrame(user_feedbacks)
-            st.dataframe(df_fb.reindex(columns=["timestamp", "role", "category", "rating", "comment"]), use_container_width=True, hide_index=True)
+        with st.container(border=True):
+            st.markdown("##### Received User Feedback")
+            user_feedbacks = list(feedback_col.find().sort("timestamp", -1))
+            if user_feedbacks:
+                df_fb = pd.DataFrame(user_feedbacks)
+                df_fb["timestamp"] = df_fb["timestamp"].dt.strftime("%Y-%m-%d %H:%M:%S UTC")
+                st.dataframe(df_fb.reindex(columns=["timestamp", "role", "category", "rating", "comment"]), use_container_width=True, hide_index=True)
+            else:
+                st.info("No submitted user feedback yet.")
