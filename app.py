@@ -1,11 +1,14 @@
 import os
 import certifi
 import base64
+import smtplib
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
 from pymongo import MongoClient, errors
 from datetime import datetime, date, timezone
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
 
 # ---------------------------------------------------------
 # 1. Page Config & Custom Styling (Mobile & Responsive)
@@ -113,11 +116,44 @@ def inject_custom_design():
         box-shadow: 0 4px 12px rgba(0, 122, 255, 0.3) !important;
     }
 
+    /* Position Feedback Floating Icon on Bottom-Left */
+    .feedback-floating-container {
+        position: fixed;
+        bottom: 24px;
+        left: 20px;
+        z-index: 999998;
+    }
+
+    .feedback-floating-container [data-testid="stPopover"] > button {
+        background: rgba(255, 255, 255, 0.9) !important;
+        backdrop-filter: blur(16px) saturate(180%) !important;
+        -webkit-backdrop-filter: blur(16px) saturate(180%) !important;
+        border: 1px solid rgba(209, 213, 219, 0.6) !important;
+        border-radius: 50% !important;
+        width: 50px !important;
+        height: 50px !important;
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15) !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        font-size: 20px !important;
+        transition: transform 0.2s ease !important;
+    }
+
+    .feedback-floating-container [data-testid="stPopover"] > button:hover {
+        transform: scale(1.08);
+    }
+
     @media (max-width: 768px) {
         .apple-control-center-container {
             top: auto;
             bottom: 24px;
             right: 18px;
+        }
+
+        .feedback-floating-container {
+            bottom: 24px;
+            left: 18px;
         }
         
         [data-testid="column"] {
@@ -195,6 +231,7 @@ audit_col = db["audit_logs"]
 rules_col = db["ruleset_versions"]
 patients_col = db["patient_profiles"]
 diagnostics_col = db["diagnostic_reports"]
+feedback_col = db["user_feedback"]
 
 # Seed Active Ruleset Document
 if rules_col.count_documents({}) == 0:
@@ -230,6 +267,92 @@ if patients_col.count_documents({"patient_name": "Sarah Connor"}) == 0:
 # ---------------------------------------------------------
 # 3. Helpers & Clinical Engine
 # ---------------------------------------------------------
+def send_feedback_gmail(category, rating, comment, actor_role):
+    """Sends a formatted feedback notification email via Gmail SMTP using Streamlit secrets."""
+    admin_email = st.secrets.get("ADMIN_EMAIL", "")
+    smtp_server = st.secrets.get("SMTP_SERVER", "smtp.gmail.com")
+    smtp_port = st.secrets.get("SMTP_PORT", 587)
+    smtp_user = st.secrets.get("SMTP_USER", "")
+    smtp_pass = st.secrets.get("SMTP_PASSWORD", "")
+
+    if not (admin_email and smtp_user and smtp_pass):
+        return False, "Gmail SMTP secrets (`ADMIN_EMAIL`, `SMTP_USER`, `SMTP_PASSWORD`) are not fully configured in `.streamlit/secrets.toml`."
+
+    try:
+        msg = MIMEMultipart("alternative")
+        msg["Subject"] = f"🚨 New Portal Feedback: [{category}]"
+        msg["From"] = smtp_user
+        msg["To"] = admin_email
+
+        html_content = f"""
+        <h2>New User Feedback Submitted</h2>
+        <hr>
+        <p><strong>Role:</strong> {actor_role}</p>
+        <p><strong>Category:</strong> {category}</p>
+        <p><strong>Rating:</strong> {rating}/5 Stars</p>
+        <p><strong>Submitted At:</strong> {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}</p>
+        <br>
+        <h3>Feedback Comment:</h3>
+        <blockquote style="background: #f4f4f5; padding: 12px; border-left: 4px solid #007aff; border-radius: 4px;">
+            {comment}
+        </blockquote>
+        """
+        msg.attach(MIMEText(html_content, "html"))
+
+        with smtplib.SMTP(smtp_server, int(smtp_port)) as server:
+            server.starttls()
+            server.login(smtp_user, smtp_pass)
+            server.sendmail(smtp_user, admin_email, msg.as_string())
+
+        return True, "Email successfully dispatched to Admin."
+    except Exception as e:
+        return False, str(e)
+
+def render_feedback_floating_widget(active_role):
+    """Renders a floating bottom-left popover icon for direct user feedback and Gmail integration."""
+    st.markdown('<div class="feedback-floating-container">', unsafe_allow_html=True)
+    with st.popover("💬", help="Submit Feedback"):
+        st.subheader("💬 Send Platform Feedback")
+        st.caption("Found an issue or have a feature request? Let us know!")
+
+        with st.form("gmail_feedback_form", clear_on_submit=True):
+            category = st.selectbox("Category:", ["Bug Report", "Feature Request", "UI/UX Suggestion", "General Feedback"])
+            stars_idx = st.feedback("stars")
+            rating = (stars_idx + 1) if stars_idx is not None else 5
+            comment = st.text_area("Your Feedback / Details:", placeholder="Describe what happened or how we can improve...")
+
+            submitted = st.form_submit_button("Submit & Send Email", use_container_width=True, type="primary")
+
+            if submitted:
+                if not comment.strip():
+                    st.warning("Please provide a brief comment before submitting.")
+                else:
+                    # 1. Save backup document to MongoDB
+                    feedback_col.insert_one({
+                        "role": active_role,
+                        "category": category,
+                        "rating": rating,
+                        "comment": comment.strip(),
+                        "timestamp": datetime.now(timezone.utc)
+                    })
+
+                    # 2. Log system audit event
+                    log_audit_event(active_role, "LOCAL-USER", "SUBMIT_FEEDBACK", {
+                        "category": category,
+                        "rating": rating
+                    })
+
+                    # 3. Trigger Gmail SMTP dispatch
+                    success, email_msg = send_feedback_gmail(category, rating, comment.strip(), active_role)
+
+                    if success:
+                        st.success("✅ Thank you! Your feedback was emailed directly to the team.")
+                    else:
+                        st.success("✅ Feedback saved to database!")
+                        st.info(f"ℹ️ Note on Email Delivery: {email_msg}")
+
+    st.markdown('</div>', unsafe_allow_html=True)
+
 def render_clinical_disclaimer():
     """Renders persistent decision-support disclaimer."""
     st.warning(
@@ -580,7 +703,7 @@ def switch_role_and_close(new_role):
     st.session_state.control_center_open = False
 
 # ---------------------------------------------------------
-# 6. Apple-Style Control Center Right-Corner Panel
+# 6. Apple-Style Control Center Right-Corner Panel & Feedback Widget
 # ---------------------------------------------------------
 st.markdown('<div class="apple-control-center-container">', unsafe_allow_html=True)
 
@@ -617,6 +740,10 @@ st.markdown('</div>', unsafe_allow_html=True)
 
 # Assign active_role variable for downstream conditional blocks
 active_role = st.session_state.active_role
+
+# Render Floating Feedback Widget on Bottom Left
+render_feedback_floating_widget(active_role)
+
 # =========================================================
 # ROLE 1: PATIENT PORTAL
 # =========================================================
@@ -1337,9 +1464,27 @@ elif active_role == "System Administrator":
             st.caption("No patient profiles registered.")
 
     # ---------------------------------------------------------
-    # 4. Live System Audit Logs
+    # 4. User Feedback History Review
     # ---------------------------------------------------------
-    with st.expander("🛡️ 4. Live System Audit Logs", expanded=False):
+    with st.expander("💬 4. Platform User Feedback Logs", expanded=False):
+        st.markdown("##### 📥 Received Portal Feedback Submissions")
+        user_feedbacks = list(feedback_col.find().sort("timestamp", -1))
+        if user_feedbacks:
+            df_fb = pd.DataFrame(user_feedbacks)
+            if "timestamp" in df_fb.columns:
+                df_fb["timestamp"] = pd.to_datetime(df_fb["timestamp"]).dt.strftime("%Y-%m-%d %H:%M:%S UTC")
+            
+            target_fb_cols = ["timestamp", "role", "category", "rating", "comment"]
+            df_fb_safe = df_fb.reindex(columns=target_fb_cols)
+            df_fb_safe.columns = ["Timestamp", "Role", "Category", "Rating (Stars)", "User Comment"]
+            st.dataframe(df_fb_safe, use_container_width=True, hide_index=True)
+        else:
+            st.caption("No user feedback recorded yet.")
+
+    # ---------------------------------------------------------
+    # 5. Live System Audit Logs
+    # ---------------------------------------------------------
+    with st.expander("🛡️ 5. Live System Audit Logs", expanded=False):
         st.markdown("##### 🔍 Global Immutable Audit Trail")
         logs = list(audit_col.find().sort("timestamp", -1))
         if logs:
