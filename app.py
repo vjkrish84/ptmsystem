@@ -702,7 +702,8 @@ def switch_role_and_close(new_role):
     """Callback function to change active role and close the popover."""
     st.session_state.active_role = new_role
     st.session_state.control_center_open = False
-
+# Render Floating Feedback Widget on Bottom Left
+render_feedback_floating_widget(active_role)
 # ---------------------------------------------------------
 # 6. Apple-Style Control Center Right-Corner Panel & Feedback Widget
 # ---------------------------------------------------------
@@ -742,8 +743,7 @@ st.markdown('</div>', unsafe_allow_html=True)
 # Assign active_role variable for downstream conditional blocks
 active_role = st.session_state.active_role
 
-# Render Floating Feedback Widget on Bottom Left
-render_feedback_floating_widget(active_role)
+
 
 # =========================================================
 # ROLE 1: PATIENT PORTAL
