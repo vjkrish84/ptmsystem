@@ -10,7 +10,7 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
 # ---------------------------------------------------------
-# 1. Page Config & Custom Clean Styling
+# 1. Page Config & Custom Styling
 # ---------------------------------------------------------
 st.set_page_config(
     page_title="Enterprise Post-Transplant Portal",
@@ -30,7 +30,7 @@ def inject_clean_design():
 
     [data-testid="stSidebar"] { display: none !important; }
 
-    /* Modern Card Layout Styling */
+    /* Card Styling */
     div[data-testid="stVerticalBlockBorderWrapper"] {
         background-color: #ffffff;
         border-radius: 12px;
@@ -47,7 +47,7 @@ def inject_clean_design():
         padding: 12px 16px;
     }
 
-    /* Primary Tabs Customization */
+    /* Primary Tabs */
     .stTabs [data-baseweb="tab-list"] {
         gap: 8px;
         border-bottom: 2px solid #e2e8f0;
@@ -60,7 +60,7 @@ def inject_clean_design():
         font-weight: 500;
     }
 
-    /* Status Badges */
+    /* Badges */
     .status-badge-red {
         background-color: #fef2f2;
         color: #991b1b;
@@ -68,7 +68,6 @@ def inject_clean_design():
         padding: 10px 16px;
         border-radius: 8px;
         font-weight: 600;
-        font-size: 0.95rem;
         margin-bottom: 1rem;
     }
     .status-badge-amber {
@@ -78,7 +77,6 @@ def inject_clean_design():
         padding: 10px 16px;
         border-radius: 8px;
         font-weight: 600;
-        font-size: 0.95rem;
         margin-bottom: 1rem;
     }
     .status-badge-green {
@@ -88,7 +86,6 @@ def inject_clean_design():
         padding: 10px 16px;
         border-radius: 8px;
         font-weight: 600;
-        font-size: 0.95rem;
         margin-bottom: 1rem;
     }
     </style>
@@ -97,7 +94,7 @@ def inject_clean_design():
 inject_clean_design()
 
 # ---------------------------------------------------------
-# 2. Database Initialization
+# 2. Database Connections & Seeding
 # ---------------------------------------------------------
 @st.cache_resource
 def init_connection():
@@ -125,7 +122,7 @@ patients_col = db["patient_profiles"]
 diagnostics_col = db["diagnostic_reports"]
 feedback_col = db["user_feedback"]
 
-# Initial seed data ensuring database completeness
+# Initialize default seed data if database is fresh
 if rules_col.count_documents({}) == 0:
     rules_col.insert_one({
         "ruleset_id": "RS-DEMO-v1.0",
@@ -149,7 +146,7 @@ if patients_col.count_documents({"patient_name": "Sarah Connor"}) == 0:
         "transplant_date": "2026-01-15",
         "allergies": ["NSAIDs", "Penicillin"],
         "current_medications": [
-            {"drug": "Tacrolimus", "dose": "3mg BID", "status": "Matched"},
+            {"drug": "Tacrolimus", "EHR_dose": "3mg BID", "patient_dose": "3mg BID", "status": "Matched"},
             {"drug": "Prednisone", "EHR_dose": "5mg Daily", "patient_dose": "10mg Daily", "status": "Mismatch"}
         ],
         "appointments": []
@@ -175,7 +172,7 @@ def send_feedback_gmail(category, rating, comment, actor_role):
     smtp_pass = st.secrets.get("SMTP_PASSWORD", "")
 
     if not (admin_email and smtp_user and smtp_pass):
-        return False, "SMTP secrets missing."
+        return False, "SMTP configuration incomplete."
 
     try:
         msg = MIMEMultipart("alternative")
@@ -197,7 +194,7 @@ def send_feedback_gmail(category, rating, comment, actor_role):
             server.login(smtp_user, smtp_pass)
             server.sendmail(smtp_user, admin_email, msg.as_string())
 
-        return True, "Email delivered."
+        return True, "Email sent successfully."
     except Exception as e:
         return False, str(e)
 
@@ -276,9 +273,9 @@ def create_new_patient_profile(name, p_id, organ, tx_date, allergies_list, initi
     return True, "Patient profile successfully created!"
 
 # ---------------------------------------------------------
-# 4. Shared Reusable UI Components
+# 4. Custom Marker & Chart Engine
 # ---------------------------------------------------------
-def render_vitals_trends(patient_name: str):
+def render_vitals_trends_with_custom_markers(patient_name: str):
     logs = list(vitals_col.find({"patient_name": patient_name}).sort("timestamp", 1))
     if not logs:
         st.info("No vital records available for this patient.")
@@ -287,28 +284,76 @@ def render_vitals_trends(patient_name: str):
     df = pd.DataFrame(logs)
     df["Formatted_Time"] = df["timestamp"].dt.strftime("%b %d, %H:%M")
 
+    # Fetch active thresholds for markers
+    active_ruleset = rules_col.find_one({"active": True}) or {}
+    params = active_ruleset.get("parameters", {
+        "fever_temp_f": 100.0, "tacrolimus_high": 12.0, "tacrolimus_low": 4.0, "creatinine_high": 1.8
+    })
+
+    # Generate Dynamic Custom Marker Colors and Symbols
+    temp_colors = ['#dc2626' if t >= params["fever_temp_f"] else '#2563eb' for t in df.get("temperature_f", [98.6]*len(df))]
+    temp_symbols = ['triangle-up' if t >= params["fever_temp_f"] else 'circle' for t in df.get("temperature_f", [98.6]*len(df))]
+
+    tac_colors = []
+    for tac in df.get("tacrolimus", [6.0]*len(df)):
+        if tac > params["tacrolimus_high"] or tac < params["tacrolimus_low"]:
+            tac_colors.append('#dc2626')
+        else:
+            tac_colors.append('#16a34a')
+
     col1, col2 = st.columns(2)
     with col1:
         fig1 = go.Figure()
-        fig1.add_trace(go.Scatter(x=df["Formatted_Time"], y=df.get("weight_kg", []), mode="lines+markers", name="Weight (kg)", line=dict(color="#2563eb", width=2)))
-        fig1.add_trace(go.Scatter(x=df["Formatted_Time"], y=df.get("temperature_f", []), mode="lines+markers", name="Temp (°F)", yaxis="y2", line=dict(color="#d97706", width=2, dash="dot")))
-        fig1.update_layout(title="Weight & Temperature History", height=280, margin=dict(l=10, r=10, t=35, b=10), yaxis2=dict(overlaying="y", side="right"))
+        # Weight trace
+        fig1.add_trace(go.Scatter(
+            x=df["Formatted_Time"], y=df.get("weight_kg", []),
+            mode="lines+markers", name="Weight (kg)",
+            line=dict(color="#2563eb", width=2),
+            marker=dict(size=8, symbol='circle')
+        ))
+        # Temperature trace with dynamic high-fever custom markers
+        fig1.add_trace(go.Scatter(
+            x=df["Formatted_Time"], y=df.get("temperature_f", []),
+            mode="lines+markers", name="Temp (°F)", yaxis="y2",
+            line=dict(color="#d97706", width=2, dash="dot"),
+            marker=dict(size=10, color=temp_colors, symbol=temp_symbols)
+        ))
+        # Threshold Reference Line
+        fig1.add_hline(y=params["fever_temp_f"], line_dash="dash", line_color="red", yref="y2", annotation_text="Fever Threshold (100°F)")
+        fig1.update_layout(title="Weight & Temp (Custom Alarm Markers)", height=300, margin=dict(l=10, r=10, t=35, b=10), yaxis2=dict(overlaying="y", side="right"))
         st.plotly_chart(fig1, use_container_width=True)
 
     with col2:
         fig2 = go.Figure()
-        fig2.add_trace(go.Scatter(x=df["Formatted_Time"], y=df.get("tacrolimus", []), mode="lines+markers", name="Tacrolimus (ng/mL)", line=dict(color="#16a34a", width=2)))
-        fig2.add_trace(go.Scatter(x=df["Formatted_Time"], y=df.get("creatinine", []), mode="lines+markers", name="Creatinine (mg/dL)", yaxis="y2", line=dict(color="#dc2626", width=2)))
-        fig2.update_layout(title="Tacrolimus & Creatinine Markers", height=280, margin=dict(l=10, r=10, t=35, b=10), yaxis2=dict(overlaying="y", side="right"))
+        # Tacrolimus trace with dynamic outlier markers
+        fig2.add_trace(go.Scatter(
+            x=df["Formatted_Time"], y=df.get("tacrolimus", []),
+            mode="lines+markers", name="Tacrolimus (ng/mL)",
+            line=dict(color="#16a34a", width=2),
+            marker=dict(size=10, color=tac_colors)
+        ))
+        # Creatinine trace
+        fig2.add_trace(go.Scatter(
+            x=df["Formatted_Time"], y=df.get("creatinine", []),
+            mode="lines+markers", name="Creatinine (mg/dL)", yaxis="y2",
+            line=dict(color="#dc2626", width=2)
+        ))
+        # Upper & Lower Bounds
+        fig2.add_hline(y=params["tacrolimus_high"], line_dash="dash", line_color="red", annotation_text="Tac High Limit")
+        fig2.add_hline(y=params["tacrolimus_low"], line_dash="dash", line_color="orange", annotation_text="Tac Low Limit")
+        fig2.update_layout(title="Tacrolimus & Creatinine Bounds", height=300, margin=dict(l=10, r=10, t=35, b=10), yaxis2=dict(overlaying="y", side="right"))
         st.plotly_chart(fig2, use_container_width=True)
 
-    with st.expander("📄 View Detailed Log Table"):
+    with st.expander("📄 View Historical Table"):
         target_cols = ["timestamp", "weight_kg", "systolic_bp", "diastolic_bp", "temperature_f", "heart_rate", "tacrolimus", "creatinine", "symptoms"]
         display_df = df.reindex(columns=target_cols).copy()
         display_df["timestamp"] = display_df["timestamp"].dt.strftime("%Y-%m-%d %H:%M")
         display_df.columns = ["Timestamp", "Weight (kg)", "Sys BP", "Dia BP", "Temp (°F)", "Heart Rate", "Tacrolimus", "Creatinine", "Symptoms"]
         st.dataframe(display_df, use_container_width=True, hide_index=True)
 
+# ---------------------------------------------------------
+# 5. Shared Reusable Modules
+# ---------------------------------------------------------
 def render_communication_hub(patient_name: str, active_role: str):
     messages = list(notifs_col.find({"patient_name": patient_name}).sort("timestamp", -1))
     
@@ -398,7 +443,7 @@ def render_feedback_section(actor_role: str):
         st.markdown("##### 💬 Submit System Feedback")
         with st.form(key=f"feedback_form_{actor_role}"):
             f_cat = st.selectbox("Feedback Category:", ["Bug Report", "UI Layout Improvement", "Clinical Rule Adjustment", "General Feedback"])
-            f_rating = st.slider("Rating (1-5):", 1, 5, 5)
+            f_rating = st.slider("Rating (1-5 Stars):", 1, 5, 5)
             f_comment = st.text_area("Your Comments / Suggestions:")
             
             if st.form_submit_button("Submit Feedback", type="primary", use_container_width=True):
@@ -414,11 +459,11 @@ def render_feedback_section(actor_role: str):
                     if sent:
                         st.success("✅ Feedback saved and email notification sent to admin!")
                     else:
-                        st.success("✅ Feedback saved to database! (Email notification skipped or unconfigured)")
+                        st.success("✅ Feedback saved to database!")
                     st.rerun()
 
 # ---------------------------------------------------------
-# 5. Header Bar & Native Role Selector
+# 6. Header Bar & Navigation
 # ---------------------------------------------------------
 st.title("🩺 Enterprise Post-Transplant Portal")
 
@@ -450,11 +495,11 @@ if active_role == "Patient Portal":
 
     tab_vitals, tab_trends, tab_messages, tab_labs, tab_register, tab_fb = st.tabs([
         "📝 Daily Vitals", 
-        "📊 Trends & History", 
+        "📊 Trends & Markers", 
         "💬 Care Team Messages", 
         "🧪 Lab Reports", 
         "👤 Register Account",
-        "💬 Feedback"
+        "💬 System Feedback"
     ])
 
     with tab_vitals:
@@ -495,7 +540,7 @@ if active_role == "Patient Portal":
                     st.rerun()
 
     with tab_trends:
-        render_vitals_trends(selected_patient)
+        render_vitals_trends_with_custom_markers(selected_patient)
 
     with tab_messages:
         render_communication_hub(selected_patient, "Patient Portal")
@@ -517,7 +562,7 @@ if active_role == "Patient Portal":
                     if np_name.strip():
                         success, msg = create_new_patient_profile(
                             np_name.strip(), np_id.strip(), np_organ, np_tx_date, [a.strip() for a in np_allergies.split(",")],
-                            [{"drug": "Tacrolimus", "dose": "2mg BID", "status": "Matched"}]
+                            [{"drug": "Tacrolimus", "EHR_dose": "2mg BID", "patient_dose": "2mg BID", "status": "Matched"}]
                         )
                         if success:
                             st.success(f"✅ {msg}")
@@ -535,10 +580,10 @@ elif active_role == "Caregiver Proxy":
     st.subheader("👥 Caregiver Proxy Management")
     selected_patient = st.selectbox("Select Patient Profile:", options=all_registered_patients)
 
-    tab_trends, tab_messages, tab_labs, tab_fb = st.tabs(["📊 Patient Vitals", "💬 Care Team Messaging", "🧪 Diagnostic Reports", "💬 Feedback"])
+    tab_trends, tab_messages, tab_labs, tab_fb = st.tabs(["📊 Patient Vitals", "💬 Care Team Messaging", "🧪 Diagnostic Reports", "💬 System Feedback"])
 
     with tab_trends:
-        render_vitals_trends(selected_patient)
+        render_vitals_trends_with_custom_markers(selected_patient)
 
     with tab_messages:
         render_communication_hub(selected_patient, "Caregiver Proxy View")
@@ -572,10 +617,10 @@ elif active_role == "Doctor Workspace":
 
     tab_triage, tab_vitals, tab_notes, tab_rx, tab_fb = st.tabs([
         "🚨 Triage & Action", 
-        "📊 Vital Trends", 
+        "📊 Vital Trends & Markers", 
         "📝 Consultation Notes", 
         "💊 Drug Clearance",
-        "💬 Feedback"
+        "💬 System Feedback"
     ])
 
     with tab_triage:
@@ -597,7 +642,7 @@ elif active_role == "Doctor Workspace":
                     st.rerun()
 
     with tab_vitals:
-        render_vitals_trends(selected_p)
+        render_vitals_trends_with_custom_markers(selected_p)
 
     with tab_notes:
         with st.container(border=True):
@@ -646,7 +691,7 @@ elif active_role == "Transplant Coordinator":
         "💊 Medication Reconciliation", 
         "📅 Appointments & Messages", 
         "➕ Patient Onboarding",
-        "💬 Feedback"
+        "💬 System Feedback"
     ])
 
     with tab_meds:
@@ -654,11 +699,24 @@ elif active_role == "Transplant Coordinator":
             st.markdown("##### Medication Reconciliation Suite")
             meds = p_profile.get("current_medications", [])
             if meds:
+                updated_meds = []
                 for i, m in enumerate(meds):
-                    ca, cb = st.columns([3, 1])
-                    ca.write(f"• **{m.get('drug')}**: {m.get('dose', m.get('EHR_dose', 'N/A'))} — *Status: {m.get('status', 'Unverified')}*")
-                    if cb.button("Confirm Reconciled", key=f"rec_{i}"):
-                        st.success(f"✅ Reconciled {m.get('drug')}")
+                    st.markdown(f"**Medication #{i+1}: {m.get('drug')}**")
+                    c_m1, c_m2, c_m3 = st.columns([2, 2, 1])
+                    ehr_d = c_m1.text_input(f"EHR Dose ({m.get('drug')})", value=m.get('EHR_dose', '3mg BID'), key=f"ehr_{i}")
+                    pat_d = c_m2.text_input(f"Patient Reported ({m.get('drug')})", value=m.get('patient_dose', '3mg BID'), key=f"pat_{i}")
+                    
+                    m_status = "Matched" if ehr_d == pat_d else "Mismatch"
+                    c_m3.write(f"Status: **{m_status}**")
+                    
+                    updated_meds.append({"drug": m.get("drug"), "EHR_dose": ehr_d, "patient_dose": pat_d, "status": m_status})
+                    st.divider()
+
+                if st.button("Save Reconciled Medication State", type="primary"):
+                    patients_col.update_one({"patient_name": selected_p}, {"$set": {"current_medications": updated_meds}})
+                    log_audit_event("Coordinator", "COORD-01", "RECONCILE_MEDS", {"patient": selected_p})
+                    st.success("✅ Medication state successfully updated and reconciled!")
+                    st.rerun()
             else:
                 st.info("No recorded medications for this patient.")
 
@@ -688,7 +746,7 @@ elif active_role == "Transplant Coordinator":
                     if c_name.strip():
                         success, msg = create_new_patient_profile(
                             c_name.strip(), c_id.strip(), c_organ, c_tx_date, [a.strip() for a in c_allergies.split(",")],
-                            [{"drug": "Tacrolimus", "dose": "3mg BID", "status": "Matched"}]
+                            [{"drug": "Tacrolimus", "EHR_dose": "3mg BID", "patient_dose": "3mg BID", "status": "Matched"}]
                         )
                         if success:
                             st.success(f"✅ {msg}")
@@ -703,7 +761,7 @@ elif active_role == "Transplant Coordinator":
 # ROLE 5: SYSTEM ADMINISTRATOR
 # ---------------------------------------------------------
 elif active_role == "System Admin":
-    st.subheader("⚙️ System Governance & Governance Dashboard")
+    st.subheader("⚙️ System Governance & Administration")
 
     tab_rules, tab_audit, tab_feedback = st.tabs([
         "📜 Clinical Rules Engine", 
