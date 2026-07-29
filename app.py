@@ -18,7 +18,7 @@ st.set_page_config(
     page_title="Enterprise Post-Transplant Portal",
     page_icon="🩺",
     layout="wide",
-    initial_sidebar_state="collapsed"  # Collapsed by default for mobile screen real estate
+    initial_sidebar_state="collapsed"  # Keep sidebar collapsed on mobile
 )
 
 def inject_custom_design():
@@ -29,6 +29,16 @@ def inject_custom_design():
     
     html, body, [class*="css"] {
         font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Inter', sans-serif;
+    }
+
+    /* Maximize viewport width and remove top whitespace on mobile */
+    @media (max-width: 768px) {
+        .block-container {
+            padding-top: 1rem !important;
+            padding-bottom: 3rem !important;
+            padding-left: 0.75rem !important;
+            padding-right: 0.75rem !important;
+        }
     }
 
     /* Prevent mobile scroll trapping inside Streamlit expanders */
@@ -177,7 +187,6 @@ if patients_col.count_documents({"patient_name": "Sarah Connor"}) == 0:
 # 3. Helpers & Clinical Engine
 # ---------------------------------------------------------
 def send_feedback_gmail(category, rating, comment, actor_role):
-    """Sends a formatted feedback notification email via Gmail SMTP using Streamlit secrets."""
     admin_email = st.secrets.get("ADMIN_EMAIL", "")
     smtp_server = st.secrets.get("SMTP_SERVER", "smtp.gmail.com")
     smtp_port = st.secrets.get("SMTP_PORT", 587)
@@ -218,9 +227,7 @@ def send_feedback_gmail(category, rating, comment, actor_role):
         return False, str(e)
 
 def render_feedback_floating_widget(active_role):
-    """Renders a mobile-friendly bottom-left popover icon for feedback."""
     st.markdown('<div class="feedback-floating-container">', unsafe_allow_html=True)
-    st.markdown("### Your Feedback Matters ###")
     with st.popover("💬", help="Submit Feedback"):
         st.subheader("💬 Send Feedback")
         st.caption("Found an issue or have a suggestion?")
@@ -260,16 +267,13 @@ def render_feedback_floating_widget(active_role):
     st.markdown('</div>', unsafe_allow_html=True)
 
 def render_clinical_disclaimer():
-    """Renders decision-support disclaimer."""
     st.warning(
-        "⚠️ **CLINICAL DISCLAIMER:** "
-        "Auxiliary decision-support tool. "
+        "⚠️ **CLINICAL DISCLAIMER:** Auxiliary decision-support tool. "
         "All triage scoring, lab/imaging reports, and interaction warnings must be verified by a clinician prior to intervention.",
         icon="🩺"
     )
 
 def log_audit_event(actor_role: str, actor_id: str, action: str, details: dict):
-    """Central audit function for recording system actions."""
     audit_col.insert_one({
         "timestamp": datetime.now(timezone.utc),
         "actor_role": actor_role,
@@ -279,7 +283,6 @@ def log_audit_event(actor_role: str, actor_id: str, action: str, details: dict):
     })
 
 def render_dynamic_patient_fields():
-    """Renders custom dynamic patient inputs in full-width mobile view."""
     custom_inputs = {}
     dynamic_fields = list(db["schema_config"].find({"entity": "patient_input"}))
     
@@ -375,7 +378,6 @@ def evaluate_clinical_triage(latest_doc, prev_doc=None):
     return "GREEN", red_flags, amber_flags, explanations
 
 def render_vitals_trends(patient_name: str):
-    """Generates responsive trends and full historical logs."""
     logs = list(vitals_col.find({"patient_name": patient_name}).sort("timestamp", 1))
     
     if not logs:
@@ -385,7 +387,6 @@ def render_vitals_trends(patient_name: str):
     df = pd.DataFrame(logs)
     df["Formatted_Time"] = df["timestamp"].dt.strftime("%b %d, %H:%M")
 
-    # Stack charts vertically for mobile viewports
     fig1 = go.Figure()
     fig1.add_trace(go.Scatter(x=df["Formatted_Time"], y=df.get("weight_kg", []), mode="lines+markers", name="Weight (kg)", line=dict(color="#007aff", width=3)))
     fig1.add_trace(go.Scatter(x=df["Formatted_Time"], y=df.get("temperature_f", []), mode="lines+markers", name="Temp (°F)", yaxis="y2", line=dict(color="#ff9500", width=2, dash="dash")))
@@ -426,7 +427,6 @@ def render_vitals_trends(patient_name: str):
     st.dataframe(display_df, use_container_width=True)
 
 def render_custom_markers(patient_name: str, key_prefix: str = "default"):
-    """Render custom dynamic parameter historical graphs for a patient profile."""
     patient_logs = list(vitals_col.find({"patient_name": patient_name}).sort("timestamp", 1))
     custom_marker_names = set()
     for log in patient_logs:
@@ -528,7 +528,6 @@ def render_communication_hub(patient_name: str, active_role: str):
                 st.rerun()
 
 def render_diagnostics_viewer(patient_name: str, allow_upload: bool = False, actor_role: str = "Patient"):
-    """Renders the diagnostic directory with full audit tracking."""
     st.markdown(f"#### 🔬 Diagnostics: **{patient_name}**")
 
     if allow_upload:
@@ -609,7 +608,6 @@ def render_diagnostics_viewer(patient_name: str, allow_upload: bool = False, act
                     st.write(f"**Notes:** {r.get('notes')}")
 
 def render_clinical_notes_viewer(patient_name: str):
-    """Retrieves and displays signed clinical consultation notes."""
     notes = list(notes_col.find({"patient_name": patient_name}).sort("timestamp", -1))
     
     if not notes:
@@ -630,7 +628,7 @@ def render_clinical_notes_viewer(patient_name: str):
             st.write(n.get("examination", "N/A"))
 
 # ---------------------------------------------------------
-# 5. Dynamic Navigation Bar (Mobile-Optimized Dropdowns)
+# 5. Mobile-Optimized Top Header Navigation & State Controls
 # ---------------------------------------------------------
 all_registered_patients = sorted(patients_col.distinct("patient_name")) or ["Sarah Connor"]
 
@@ -650,52 +648,75 @@ role_icons = {
     "System Administrator": "⚙️"
 }
 
-with st.sidebar:
-    st.title("🩺 Transplant Monitoring Portal")
-    
-    active_role = st.selectbox(
-        "👤 Select Role:",
-        options=role_options,
-        index=0,
-        format_func=lambda r: f"{role_icons.get(r, '⚙️')} {r}"
-    )
-    st.session_state.active_role = active_role
+# Initialize Mobile Navigation Session States
+if "selected_patient" not in st.session_state:
+    st.session_state.selected_patient = all_registered_patients[0]
 
-    # Dynamic Navigation using Selectboxes (much better for mobile touch targets than radio buttons)
-    if active_role == "Patient Portal":
-        patient_nav = st.selectbox("Navigation", ["Dashboard & Vitals", "Diagnostic Studies", "Care Team Chat", "Clinical Notes", "Onboarding / Profile"])
-    elif active_role == "Caregiver Proxy View":
-        caregiver_nav = st.selectbox("Navigation", ["Overview Trends", "Custom Markers", "Diagnostics", "Care Team Chat", "Physician Notes"])
-    elif active_role == "Doctor (Nephrologist)":
-        doc_nav = st.selectbox("Navigation", ["Flight Board Queue", "Drug Interactions", "Consultation Entry"])
-    elif active_role == "Transplant Coordinator":
-        coord_nav = st.selectbox("Navigation", ["Patient Intake Queue", "Medication Reconciliation", "Schedule & Messages", "Onboard New Patient"])
-    elif active_role == "System Administrator":
-        admin_nav = st.selectbox("Navigation", ["Rules Engine", "Dynamic Parameters", "Patient Directory", "User Feedback", "Audit Logs"])
+if "active_role" not in st.session_state:
+    st.session_state.active_role = "Patient Portal"
+
+# CLEAN MOBILE TOP HEADER (replaces deep sidebars)
+header_left, header_right = st.columns([4, 1])
+
+with header_left:
+    st.title("🩺 Portal")
+
+with header_right:
+    # Quick header popover drawer for prototype role & patient selection
+    with st.popover("⚙️", help="Switch Role / Patient Profile"):
+        st.markdown("**⚙️ Prototype Switcher**")
+        
+        new_role = st.selectbox(
+            "Select Active Role:",
+            options=role_options,
+            index=role_options.index(st.session_state.active_role),
+            format_func=lambda r: f"{role_icons.get(r, '⚙️')} {r}"
+        )
+        if new_role != st.session_state.active_role:
+            st.session_state.active_role = new_role
+            st.rerun()
+
+        new_patient = st.selectbox("Active Patient Profile:", options=all_registered_patients, index=all_registered_patients.index(st.session_state.selected_patient) if st.session_state.selected_patient in all_registered_patients else 0)
+        if new_patient != st.session_state.selected_patient:
+            st.session_state.selected_patient = new_patient
+            st.rerun()
+
+active_role = st.session_state.active_role
+selected_patient = st.session_state.selected_patient
 
 render_feedback_floating_widget(active_role)
 
 # =========================================================
-# ROLE 1: PATIENT PORTAL
+# ROLE 1: PATIENT PORTAL (Hub & Spoke / Tabbed Mobile View)
 # =========================================================
 if active_role == "Patient Portal":
-    st.header("📱 Patient Portal")
+    st.caption(f"👤 Patient: **{selected_patient}**")
     
-    selected_patient = st.selectbox("Active Patient Profile:", options=all_registered_patients)
+    # Segmented Control Bar (Native Touch Bar)
+    p_nav = st.segmented_control(
+        "Patient Menu",
+        options=["📊 Overview", "📝 Check-In", "🔬 Diag", "💬 Chat", "📋 Notes", "👤 Register"],
+        default="📊 Overview",
+        label_visibility="collapsed"
+    )
+
     p_profile = patients_col.find_one({"patient_name": selected_patient}) or {}
     latest_vitals = vitals_col.find_one({"patient_name": selected_patient}, sort=[("timestamp", -1)]) or {}
 
-    # Touch-Friendly 2-Column Responsive Metric Grid
-    m1, m2 = st.columns(2)
-    m1.metric("Weight", f"{latest_vitals.get('weight_kg', 'N/A')} kg")
-    m2.metric("Temperature", f"{latest_vitals.get('temperature_f', 'N/A')} °F")
-    
-    m3, m4 = st.columns(2)
-    m3.metric("BP", f"{latest_vitals.get('systolic_bp', 'N/A')}/{latest_vitals.get('diastolic_bp', 'N/A')}")
-    m4.metric("Tacrolimus", f"{latest_vitals.get('tacrolimus', 'N/A')} ng/mL")
-    st.markdown("---")
+    if p_nav == "📊 Overview":
+        # 2x2 Metric Touch Grid
+        m1, m2 = st.columns(2)
+        m1.metric("Weight", f"{latest_vitals.get('weight_kg', 'N/A')} kg")
+        m2.metric("Temp", f"{latest_vitals.get('temperature_f', 'N/A')} °F")
+        
+        m3, m4 = st.columns(2)
+        m3.metric("BP", f"{latest_vitals.get('systolic_bp', 'N/A')}/{latest_vitals.get('diastolic_bp', 'N/A')}")
+        m4.metric("Tacrolimus", f"{latest_vitals.get('tacrolimus', 'N/A')} ng/mL")
+        
+        st.divider()
+        render_vitals_trends(selected_patient)
 
-    if patient_nav == "Dashboard & Vitals":
+    elif p_nav == "📝 Check-In":
         st.subheader("📝 Daily Vitals Check-In")
         with st.form("patient_vitals_submission"):
             weight = st.number_input("Weight (kg)", value=68.5, step=0.1)
@@ -736,20 +757,16 @@ if active_role == "Patient Portal":
                 st.success(f"✅ Vitals logged successfully for {selected_patient}!")
                 st.rerun()
 
-        st.divider()
-        st.subheader("📊 Vitals Trends & History")
-        render_vitals_trends(selected_patient)
-
-    elif patient_nav == "Diagnostic Studies":
+    elif p_nav == "🔬 Diag":
         render_diagnostics_viewer(selected_patient, allow_upload=True, actor_role="Patient")
 
-    elif patient_nav == "Care Team Chat":
+    elif p_nav == "💬 Chat":
         render_communication_hub(selected_patient, "Patient Portal")
 
-    elif patient_nav == "Clinical Notes":
+    elif p_nav == "📋 Notes":
         render_clinical_notes_viewer(selected_patient)
 
-    elif patient_nav == "Onboarding / Profile":
+    elif p_nav == "👤 Register":
         st.subheader("👤 Register Patient Profile")
         with st.form("new_patient_self_reg"):
             np_name = st.text_input("Full Patient Name:")
@@ -779,36 +796,45 @@ if active_role == "Patient Portal":
 # ROLE 2: CAREGIVER PROXY VIEW
 # =========================================================
 elif active_role == "Caregiver Proxy View":
-    st.header("👥 Caregiver Proxy View")
-    st.info("🔒 Access restricted to authorized patient profiles.")
+    st.caption(f"👥 Caregiver View for **{selected_patient}**")
 
-    patient_name = st.selectbox("Select Patient Profile:", options=all_registered_patients)
+    cg_nav = st.segmented_control(
+        "Caregiver Menu",
+        options=["📊 Trends", "🧪 Custom", "🔬 Diag", "💬 Chat", "📋 Notes"],
+        default="📊 Trends",
+        label_visibility="collapsed"
+    )
 
-    if caregiver_nav == "Overview Trends":
-        render_vitals_trends(patient_name)
+    if cg_nav == "📊 Trends":
+        render_vitals_trends(selected_patient)
 
-    elif caregiver_nav == "Custom Markers":
-        st.caption("Telemetry for dynamic parameters.")
-        render_custom_markers(patient_name, key_prefix="caregiver")
+    elif cg_nav == "🧪 Custom":
+        render_custom_markers(selected_patient, key_prefix="caregiver")
 
-    elif caregiver_nav == "Diagnostics":
-        render_diagnostics_viewer(patient_name, allow_upload=False, actor_role="Caregiver")
+    elif cg_nav == "🔬 Diag":
+        render_diagnostics_viewer(selected_patient, allow_upload=False, actor_role="Caregiver")
 
-    elif caregiver_nav == "Care Team Chat":
-        render_communication_hub(patient_name, "Caregiver Proxy View")
+    elif cg_nav == "💬 Chat":
+        render_communication_hub(selected_patient, "Caregiver Proxy View")
 
-    elif caregiver_nav == "Physician Notes":
-        render_clinical_notes_viewer(patient_name)
+    elif cg_nav == "📋 Notes":
+        render_clinical_notes_viewer(selected_patient)
 
 # =========================================================
 # ROLE 3: DOCTOR (NEPHROLOGIST) WORKSPACE
 # =========================================================
 elif active_role == "Doctor (Nephrologist)":
     render_clinical_disclaimer()
-    st.header("👨‍⚕️ Triage Workspace")
 
-    if doc_nav == "Flight Board Queue":
-        st.caption("📱 **Patient Flight Board**")
+    doc_nav = st.segmented_control(
+        "Doctor Menu",
+        options=["🚨 Flight Board", "💊 Interactions", "✍️ Consult Note"],
+        default="🚨 Flight Board",
+        label_visibility="collapsed"
+    )
+
+    if doc_nav == "🚨 Flight Board":
+        st.subheader("📱 Triage Queue")
         for p_name in all_registered_patients:
             patient_doc = patients_col.find_one({"patient_name": p_name}) or {}
             logs = list(vitals_col.find({"patient_name": p_name}).sort("timestamp", -1))
@@ -870,8 +896,9 @@ elif active_role == "Doctor (Nephrologist)":
                 with tab_diag:
                     render_diagnostics_viewer(p_name, allow_upload=True, actor_role="Doctor")
 
-    elif doc_nav == "Drug Interactions":
-        p_name = st.selectbox("Select Patient:", options=all_registered_patients)
+    elif doc_nav == "💊 Interactions":
+        p_name = selected_patient
+        st.subheader(f"💊 Check Interactions: {p_name}")
         patient_doc = patients_col.find_one({"patient_name": p_name}) or {}
         p_allergies = patient_doc.get("allergies", [])
         
@@ -892,8 +919,9 @@ elif active_role == "Doctor (Nephrologist)":
             st.success(f"✅ Prescribing clearance confirmed for {rx_med}.")
             log_audit_event("Doctor", "DOC-NEPH-01", "DRUG_CHECK_CLEARED", {"patient": p_name, "drug": rx_med})
 
-    elif doc_nav == "Consultation Entry":
-        p_name = st.selectbox("Select Patient to Sign Note:", options=all_registered_patients)
+    elif doc_nav == "✍️ Consult Note":
+        p_name = selected_patient
+        st.subheader(f"✍️ Sign Note for {p_name}")
         with st.form(key=f"note_form_{p_name}"):
             hist = st.text_area("Subjective History:", value="Patient reports feeling well. No fever.")
             exam = st.text_area("Objective Examination:", value="Graft non-tender. BP well-controlled.")
@@ -921,13 +949,19 @@ elif active_role == "Doctor (Nephrologist)":
 # =========================================================
 elif active_role == "Transplant Coordinator":
     render_clinical_disclaimer()
-    st.header("📋 Coordinator Dashboard")
 
-    selected_p = st.selectbox("Select Target Patient Profile:", options=all_registered_patients)
+    coord_nav = st.segmented_control(
+        "Coordinator Menu",
+        options=["📋 Intake", "💊 Med Rec", "📅 Schedule", "➕ Onboard"],
+        default="📋 Intake",
+        label_visibility="collapsed"
+    )
+
+    selected_p = selected_patient
     p_profile = patients_col.find_one({"patient_name": selected_p}) or {}
 
-    if coord_nav == "Patient Intake Queue":
-        st.markdown(f"##### Intake Status for **{selected_p}**")
+    if coord_nav == "📋 Intake":
+        st.markdown(f"##### Intake Status: **{selected_p}**")
         
         c1, c2 = st.columns(2)
         c1.metric("Organ", p_profile.get('organ_type', 'N/A'))
@@ -941,11 +975,10 @@ elif active_role == "Transplant Coordinator":
             st.success(f"✅ Intake status updated to '{intake_status}'!")
 
         st.divider()
-        st.subheader("📊 Patient Historical Vitals")
         render_vitals_trends(selected_p)
 
-    elif coord_nav == "Medication Reconciliation":
-        st.markdown("##### Reconcile EHR Orders vs. Self-Reporting")
+    elif coord_nav == "💊 Med Rec":
+        st.markdown("##### Medication Reconciliation")
         meds = p_profile.get("current_medications", [])
         
         if meds:
@@ -962,8 +995,8 @@ elif active_role == "Transplant Coordinator":
         else:
             st.caption("No medication records present.")
 
-    elif coord_nav == "Schedule & Messages":
-        st.subheader("📅 Schedule Surveillance Appointment")
+    elif coord_nav == "📅 Schedule":
+        st.subheader("📅 Schedule Appointment")
         app_date = st.date_input("Schedule Date:")
         app_type = st.selectbox("Type:", ["Graft Ultrasound", "Routine Labs", "Biopsy"])
         
@@ -979,7 +1012,7 @@ elif active_role == "Transplant Coordinator":
         st.divider()
         render_communication_hub(selected_p, "Transplant Coordinator")
 
-    elif coord_nav == "Onboard New Patient":
+    elif coord_nav == "➕ Onboard":
         st.subheader("➕ Clinical Intake Onboarding")
         with st.form("coord_new_patient"):
             c_name = st.text_input("Patient Full Name:")
@@ -1016,10 +1049,15 @@ elif active_role == "Transplant Coordinator":
 # ROLE 5: SYSTEM ADMINISTRATOR
 # =========================================================
 elif active_role == "System Administrator":
-    st.header("⚙️ Dynamic System Governance")
+    admin_nav = st.segmented_control(
+        "Admin Menu",
+        options=["⚙️ Rules", "🛠️ Config", "👥 Directory", "💬 Feedback", "🛡️ Audit"],
+        default="⚙️ Rules",
+        label_visibility="collapsed"
+    )
 
-    if admin_nav == "Rules Engine":
-        st.markdown("##### Update Rules Engine Thresholds")
+    if admin_nav == "⚙️ Rules":
+        st.markdown("##### Rules Engine Thresholds")
         active_ruleset = rules_col.find_one({"active": True}) or {}
         params = active_ruleset.get("parameters", {})
 
@@ -1066,7 +1104,7 @@ elif active_role == "System Administrator":
                 df_rule_audits["details"] = df_rule_audits["details"].apply(lambda x: str(x) if isinstance(x, dict) else x)
             st.dataframe(df_rule_audits[["timestamp", "actor_role", "actor_id", "details"]], use_container_width=True, hide_index=True)
 
-    elif admin_nav == "Dynamic Parameters":
+    elif admin_nav == "🛠️ Config":
         st.subheader("🛠️ Parameter Configurator")
         tab_list, tab_edit, tab_add = st.tabs(["📋 List", "✏️ Edit", "➕ Add"])
         
@@ -1157,7 +1195,7 @@ elif active_role == "System Administrator":
                     st.success(f"Added '{new_field_name}'!")
                     st.rerun()
 
-    elif admin_nav == "Patient Directory":
+    elif admin_nav == "👥 Directory":
         st.subheader("👥 Patient Directory")
         all_patients = list(patients_col.find({}, {"_id": 0}))
         if all_patients:
@@ -1166,7 +1204,7 @@ elif active_role == "System Administrator":
             df_safe = df_patients.reindex(columns=target_cols)
             st.dataframe(df_safe, use_container_width=True)
 
-    elif admin_nav == "User Feedback":
+    elif admin_nav == "💬 Feedback":
         st.subheader("💬 User Feedback Logs")
         user_feedbacks = list(feedback_col.find().sort("timestamp", -1))
         if user_feedbacks:
@@ -1179,7 +1217,7 @@ elif active_role == "System Administrator":
             df_fb_safe.columns = ["Timestamp", "Role", "Category", "Rating", "Comment"]
             st.dataframe(df_fb_safe, use_container_width=True, hide_index=True)
 
-    elif admin_nav == "Audit Logs":
+    elif admin_nav == "🛡️ Audit":
         st.subheader("🛡️ Global Audit Trail")
         logs = list(audit_col.find().sort("timestamp", -1))
         if logs:
