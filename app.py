@@ -228,6 +228,7 @@ def send_feedback_gmail(category, rating, comment, actor_role):
 
 def render_feedback_floating_widget(active_role):
     st.markdown('<div class="feedback-floating-container">', unsafe_allow_html=True)
+    st.markdown('### Your Feedback Matters ###')
     with st.popover("💬", help="Submit Feedback"):
         st.subheader("💬 Send Feedback")
         st.caption("Found an issue or have a suggestion?")
@@ -659,12 +660,13 @@ if "active_role" not in st.session_state:
 header_left, header_right = st.columns([4, 1])
 
 with header_left:
-    st.title("🩺 Portal")
+    st.title("🩺 Transplant Monitoring Portal")
 
 with header_right:
     # Quick header popover drawer for prototype role & patient selection
+    st.markdown("### Role Switcher ###")
     with st.popover("⚙️", help="Switch Role / Patient Profile"):
-        st.markdown("**⚙️ Prototype Switcher**")
+        st.markdown("**⚙️ Role Switcher**")
         
         new_role = st.selectbox(
             "Select Active Role:",
